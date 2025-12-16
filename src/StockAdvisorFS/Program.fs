@@ -6,8 +6,7 @@ open Microsoft.Extensions.AI
 open StockAdvisorFS.StockTools
 
 // ============================================================================
-// AGENT DEFINITION - Clean, declarative, beautiful!
-// Compare this to the C# version in StockAdvisorCS...
+// AGENT DEFINITION
 // ============================================================================
 
 let stockAdvisor = agent {
@@ -30,7 +29,6 @@ let stockAdvisor = agent {
         Be concise but thorough in your analysis.
         """
 
-    // Register tools - each is just one line!
     add stockInfoTool
     add historicalTool
     add volatilityTool
@@ -38,53 +36,41 @@ let stockAdvisor = agent {
 }
 
 // ============================================================================
-// MAIN - Wire up Azure OpenAI and run the chat loop
+// MAIN
 // ============================================================================
 
-[<EntryPoint>]
-let main args =
-    async {
-        // Get Azure OpenAI endpoint
-        let endpoint =
-            Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT")
-            |> Option.ofObj
-            |> Option.defaultWith (fun () ->
-                failwith "AZURE_OPENAI_ENDPOINT environment variable is not set")
+let endpoint =
+    Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT")
+    |> Option.ofObj
+    |> Option.defaultWith (fun () -> failwith "AZURE_OPENAI_ENDPOINT environment variable is not set")
 
-        let deploymentName =
-            Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT")
-            |> Option.ofObj
-            |> Option.defaultValue "gpt-4o"
+let deploymentName =
+    Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT")
+    |> Option.ofObj
+    |> Option.defaultValue "gpt-4o"
 
-        // Create Azure OpenAI client with DefaultAzureCredential
-        let client = AzureOpenAIClient(Uri(endpoint), DefaultAzureCredential())
-        let chatClient = client.GetChatClient(deploymentName).AsIChatClient()
+let client = AzureOpenAIClient(Uri(endpoint), DefaultAzureCredential())
+let chatClient = client.GetChatClient(deploymentName).AsIChatClient()
+let agent = stockAdvisor.Build(chatClient)
 
-        // Build the agent
-        let agent = stockAdvisor.Build(chatClient)
+printfn "Stock Advisor Agent (F# Edition)"
+printfn "================================="
+printfn "Ask me about stocks! (Type 'exit' to quit)\n"
 
-        // Chat loop
-        printfn "Stock Advisor Agent (F# Edition)"
-        printfn "================================="
-        printfn "Ask me about stocks! (Type 'exit' to quit)\n"
+let rec loop () = async {
+    printf "You: "
+    let input = Console.ReadLine()
 
-        let rec loop () = async {
-            printf "You: "
-            let input = Console.ReadLine()
+    if String.IsNullOrWhiteSpace(input) then
+        return! loop ()
+    elif input.Equals("exit", StringComparison.OrdinalIgnoreCase) then
+        return ()
+    else
+        printf "\nStockAdvisor: "
+        let! response = agent.Chat input
+        printfn "%s\n" response
+        return! loop ()
+}
 
-            if String.IsNullOrWhiteSpace(input) then
-                return! loop ()
-            elif input.Equals("exit", StringComparison.OrdinalIgnoreCase) then
-                return ()
-            else
-                printf "\nStockAdvisor: "
-                let! response = agent.Chat input
-                printfn "%s\n" response
-                return! loop ()
-        }
-
-        do! loop ()
-        printfn "Goodbye!"
-        return 0
-    }
-    |> Async.RunSynchronously
+loop () |> Async.RunSynchronously
+printfn "Goodbye!"
