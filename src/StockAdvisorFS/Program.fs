@@ -5,13 +5,11 @@ open Azure.Identity
 open Microsoft.Extensions.AI
 open StockAdvisorFS.StockTools
 
-let tryGetEnv varName =
-    Environment.GetEnvironmentVariable(varName)
-    |> Option.ofObj
-    |> Option.defaultWith (fun () -> failwith $"{varName} environment variable is not set")
+let failIfNone msg opt = opt |> Option.defaultWith (fun () -> failwith msg)
+let tryGetEnv = Environment.GetEnvironmentVariable >> Option.ofObj
 
-let endpoint = tryGetEnv "AZURE_OPENAI_ENDPOINT"
-let deploymentName = tryGetEnv "AZURE_OPENAI_DEPLOYMENT"
+let endpoint = tryGetEnv "AZURE_OPENAI_ENDPOINT" |> failIfNone "AZURE_OPENAI_ENDPOINT environment variable is not set."
+let deploymentName = tryGetEnv "AZURE_OPENAI_DEPLOYMENT" |> Option.defaultValue "gpt-4o"
 
 let client = AzureOpenAIClient(Uri(endpoint), DefaultAzureCredential())
 let chatClient = client.GetChatClient(deploymentName).AsIChatClient()
