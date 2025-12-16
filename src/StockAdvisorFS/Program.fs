@@ -1,9 +1,8 @@
 open System
 open AgentNet
-open Anthropic.SDK
+open Azure.AI.OpenAI
+open Azure.Identity
 open Microsoft.Extensions.AI
-open Microsoft.SemanticKernel
-open Microsoft.SemanticKernel.ChatCompletion
 open StockAdvisorFS.StockTools
 
 // ============================================================================
@@ -33,28 +32,29 @@ let stockAdvisor = agent {
 }
 
 // ============================================================================
-// MAIN - Wire up Anthropic and run the chat loop
+// MAIN - Wire up Azure OpenAI and run the chat loop
 // ============================================================================
 
 [<EntryPoint>]
 let main args =
-    // Get API key
-    let apiKey =
-        Environment.GetEnvironmentVariable("ANTHROPIC_API_KEY")
+    // Get Azure OpenAI endpoint
+    let endpoint =
+        Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT")
         |> Option.ofObj
         |> Option.defaultWith (fun () ->
-            failwith "ANTHROPIC_API_KEY environment variable is not set")
+            failwith "AZURE_OPENAI_ENDPOINT environment variable is not set")
 
-    // Create chat service
-    let anthropicClient = new AnthropicClient(apiKey)
-    let chatService =
-        ChatClientBuilder(anthropicClient.Messages)
-            .UseFunctionInvocation()
-            .Build()
-            .AsChatCompletionService()
+    let deploymentName =
+        Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT")
+        |> Option.ofObj
+        |> Option.defaultValue "gpt-4o"
+
+    // Create Azure OpenAI client with DefaultAzureCredential
+    let client = AzureOpenAIClient(Uri(endpoint), DefaultAzureCredential())
+    let chatClient = client.GetChatClient(deploymentName).AsIChatClient()
 
     // Build the agent
-    let agent = stockAdvisor.Build(chatService)
+    let agent = stockAdvisor.Build(chatClient)
 
     // Chat loop
     printfn "Stock Advisor Agent (F# Edition)"

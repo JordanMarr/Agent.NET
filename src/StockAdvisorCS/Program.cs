@@ -1,35 +1,28 @@
-using Anthropic.SDK;
+using Azure.AI.OpenAI;
+using Azure.Identity;
+using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
-using Microsoft.Extensions.DependencyInjection;
-using Microsoft.SemanticKernel;
-using Microsoft.SemanticKernel.Agents;
-using Microsoft.SemanticKernel.ChatCompletion;
 using StockAdvisorCS;
 
-// Get API key from environment variable
-var apiKey = Environment.GetEnvironmentVariable("ANTHROPIC_API_KEY")
-    ?? throw new InvalidOperationException("ANTHROPIC_API_KEY environment variable is not set");
+// Get Azure OpenAI endpoint from environment variable
+var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT")
+    ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT environment variable is not set");
 
-// Create the Anthropic client and wrap it for SemanticKernel
-var anthropicClient = new AnthropicClient(apiKey);
-var chatService = new ChatClientBuilder(anthropicClient.Messages)
-    .UseFunctionInvocation()
-    .Build()
-    .AsChatCompletionService();
+var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT") ?? "gpt-4o";
 
-// Build the kernel with Anthropic as the chat completion service
-var builder = Kernel.CreateBuilder();
-builder.Services.AddSingleton<IChatCompletionService>(chatService);
-var kernel = builder.Build();
+// Create the Azure OpenAI client with DefaultAzureCredential
+var azureClient = new AzureOpenAIClient(
+    new Uri(endpoint),
+    new DefaultAzureCredential());
 
-// Import our stock tools plugin
-kernel.ImportPluginFromType<StockTools>();
+// Get an IChatClient from the Azure OpenAI client
+IChatClient chatClient = azureClient.GetChatClient(deploymentName).AsIChatClient();
 
-// Create the ChatCompletionAgent
-var agent = new ChatCompletionAgent
-{
-    Name = "StockAdvisor",
-    Instructions = """
+// Create the StockAdvisor agent with tools
+AIAgent stockAdvisor = new ChatClientAgent(
+    chatClient,
+    name: "StockAdvisor",
+    instructions: """
         You are a helpful stock analysis assistant. You help users analyze stocks,
         compare investments, and understand market metrics.
 
@@ -38,23 +31,28 @@ var agent = new ChatCompletionAgent
         2. Analyze the information
         3. Provide clear, actionable insights
 
+        After providing your analysis, also consider broader market context:
+        - Market sector trends
+        - Economic factors that might affect the stock
+        - Risk considerations based on current market conditions
+        - A final investment recommendation summary
+
         Be concise but thorough in your analysis.
         """,
-    Kernel = kernel,
-    Arguments = new KernelArguments(
-        new PromptExecutionSettings
-        {
-            FunctionChoiceBehavior = FunctionChoiceBehavior.Auto()
-        }
-    )
-};
+    tools:
+    [
+        AIFunctionFactory.Create(StockTools.GetStockInfo),
+        AIFunctionFactory.Create(StockTools.GetHistoricalPrices),
+        AIFunctionFactory.Create(StockTools.CalculateVolatility),
+        AIFunctionFactory.Create(StockTools.CompareStocks)
+    ]);
 
 // Chat loop
-Console.WriteLine("Stock Advisor Agent");
-Console.WriteLine("===================");
+Console.WriteLine("Stock Advisor Agent (Microsoft Agent Framework)");
+Console.WriteLine("================================================");
 Console.WriteLine("Ask me about stocks! (Type 'exit' to quit)\n");
 
-var thread = new ChatHistoryAgentThread();
+AgentThread thread = stockAdvisor.GetNewThread();
 
 while (true)
 {
@@ -67,14 +65,12 @@ while (true)
     if (input.Equals("exit", StringComparison.OrdinalIgnoreCase))
         break;
 
-    Console.Write("\nStockAdvisor: ");
+    Console.WriteLine();
 
-    await foreach (var response in agent.InvokeAsync(input, thread))
-    {
-        Console.Write(response.Message.Content);
-    }
+    var response = await stockAdvisor.RunAsync(input, thread);
+    Console.WriteLine($"StockAdvisor:\n{response.Text}");
 
-    Console.WriteLine("\n");
+    Console.WriteLine();
 }
 
 Console.WriteLine("Goodbye!");

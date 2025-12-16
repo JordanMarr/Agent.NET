@@ -1,17 +1,15 @@
 using System.ComponentModel;
-using Microsoft.SemanticKernel;
 
 namespace StockAdvisorCS;
 
 /// <summary>
 /// Stock analysis tools for the StockAdvisor agent.
-/// Each method decorated with [KernelFunction] becomes available to the AI.
+/// Each method decorated with [Description] becomes available to the AI via AIFunctionFactory.
 /// </summary>
-public class StockTools
+public static class StockTools
 {
-    [KernelFunction]
     [Description("Gets current stock information including price, change, and basic metrics for a given ticker symbol")]
-    public string GetStockInfo(
+    public static string GetStockInfo(
         [Description("The stock ticker symbol (e.g., AAPL, MSFT, GOOGL)")] string symbol)
     {
         // Simulated stock data - in production, this would call a real API
@@ -38,9 +36,8 @@ public class StockTools
         return $"Stock symbol '{symbol}' not found in database.";
     }
 
-    [KernelFunction]
     [Description("Gets historical price data for a stock over a specified number of days")]
-    public string GetHistoricalPrices(
+    public static string GetHistoricalPrices(
         [Description("The stock ticker symbol")] string symbol,
         [Description("Number of days of historical data to retrieve (max 30)")] int days)
     {
@@ -68,9 +65,8 @@ public class StockTools
         return $"Historical prices for {symbol.ToUpper()} (last {days} days):\n{string.Join("\n", prices)}";
     }
 
-    [KernelFunction]
     [Description("Calculates volatility metrics for a stock based on recent price movements")]
-    public string CalculateVolatility(
+    public static string CalculateVolatility(
         [Description("The stock ticker symbol")] string symbol)
     {
         // Simulated volatility data
@@ -96,9 +92,8 @@ public class StockTools
         return $"Volatility data not available for '{symbol}'.";
     }
 
-    [KernelFunction]
     [Description("Compares fundamental metrics between two stocks to help with investment decisions")]
-    public string CompareStocks(
+    public static string CompareStocks(
         [Description("First stock ticker symbol")] string symbol1,
         [Description("Second stock ticker symbol")] string symbol2)
     {

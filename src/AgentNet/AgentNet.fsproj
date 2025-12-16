@@ -9,12 +9,12 @@
   <ItemGroup>
     <Compile Include="Tool.fs" />
     <Compile Include="Agent.fs" />
-    <Compile Include="SemanticKernel.fs" />
+    <Compile Include="AgentFramework.fs" />
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="Microsoft.SemanticKernel" Version="1.68.0" />
-    <PackageReference Include="Microsoft.SemanticKernel.Agents.Core" Version="1.68.0" />
+    <PackageReference Include="Microsoft.Agents.AI" Version="1.0.0-preview.*" />
+    <PackageReference Include="Microsoft.Extensions.AI.Abstractions" Version="10.*" />
   </ItemGroup>
 
 </Project>

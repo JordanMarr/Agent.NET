@@ -8,9 +8,11 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Anthropic.SDK" Version="5.8.0" />
-    <PackageReference Include="Microsoft.SemanticKernel" Version="1.68.0" />
-    <PackageReference Include="Microsoft.SemanticKernel.Agents.Core" Version="1.68.0" />
+    <PackageReference Include="Microsoft.Agents.AI" Version="1.0.0-preview.*" />
+    <PackageReference Include="Microsoft.Agents.AI.OpenAI" Version="1.0.0-preview.*" />
+    <PackageReference Include="Microsoft.Extensions.AI.OpenAI" Version="10.*-preview.*" />
+    <PackageReference Include="Azure.AI.OpenAI" Version="2.*" />
+    <PackageReference Include="Azure.Identity" Version="1.13.*" />
   </ItemGroup>
 
 </Project>
