@@ -20,6 +20,12 @@ let stockAdvisor = agent {
         1. Use the available tools to gather relevant data
         2. Analyze the information
         3. Provide clear, actionable insights
+        
+        After providing your analysis, also consider broader market context:
+        - Market sector trends
+        - Economic factors that might affect the stock
+        - Risk considerations based on current market conditions
+        - A final investment recommendation summary
 
         Be concise but thorough in your analysis.
         """
