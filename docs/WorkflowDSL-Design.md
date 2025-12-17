@@ -73,15 +73,15 @@ let analysisWorkflow = workflow {
 ```fsharp
 let resilientWorkflow = workflow {
     start riskyAgent
-
     retry 3
-    backoff exponential
+    backoff (Exponential (TimeSpan.FromSeconds 1., 2.0))
     timeout (TimeSpan.FromMinutes 5.)
     fallback safeAgent
-
     next outputHandler
 }
 ```
+
+The resilience modifiers apply to the previous step (`riskyAgent` in this case).
 
 ### Composition (Nested Workflows)
 
@@ -361,6 +361,6 @@ let emailWorkflow = workflow {
 1. [x] Prototype the `workflow` CE with basic `start` and `next`
 2. [x] Add `route` with pattern matching support
 3. [x] Implement `scatter` / `gather` for fan-out/fan-in
-4. [ ] Add resilience (`retry`, `timeout`, `fallback`)
+4. [x] Add resilience (`retry`, `timeout`, `backoff`, `fallback`)
 5. [ ] Build compilation layer to MAF's `WorkflowBuilder`
 6. [ ] Test with real multi-agent scenarios

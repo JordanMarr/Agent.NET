@@ -70,11 +70,34 @@ module Executor =
         }
 
 
+/// Backoff strategy for retries
+type BackoffStrategy =
+    | Immediate
+    | Linear of delay: TimeSpan
+    | Exponential of initial: TimeSpan * multiplier: float
+
+/// Resilience settings for a step
+type ResilienceSettings = {
+    RetryCount: int
+    Backoff: BackoffStrategy
+    Timeout: TimeSpan option
+    Fallback: (obj -> WorkflowContext -> Async<obj>) option
+}
+
+module ResilienceSettings =
+    let defaults = {
+        RetryCount = 0
+        Backoff = Immediate
+        Timeout = None
+        Fallback = None
+    }
+
 /// A step in a workflow pipeline
 type WorkflowStep =
     | Step of name: string * execute: (obj -> WorkflowContext -> Async<obj>)
     | Route of router: (obj -> WorkflowContext -> Async<obj>)
     | Parallel of executors: (obj -> WorkflowContext -> Async<obj>) list
+    | Resilient of settings: ResilienceSettings * inner: WorkflowStep
 
 
 /// A workflow definition that can be executed
@@ -127,6 +150,21 @@ module internal WorkflowInternal =
             return result :> obj
         })
 
+    /// Modifies the last step with a resilience update function
+    let modifyLastWithResilience (updateSettings: ResilienceSettings -> ResilienceSettings) (steps: WorkflowStep list) : WorkflowStep list =
+        match List.rev steps with
+        | [] -> failwith "No previous step to modify"
+        | last :: rest ->
+            let newLast =
+                match last with
+                | Resilient (settings, inner) ->
+                    // Already wrapped - update the settings
+                    Resilient (updateSettings settings, inner)
+                | other ->
+                    // Wrap with new resilience settings
+                    Resilient (updateSettings ResilienceSettings.defaults, other)
+            List.rev (newLast :: rest)
+
 
 /// Builder for the workflow computation expression
 type WorkflowBuilder() =
@@ -161,6 +199,31 @@ type WorkflowBuilder() =
     member _.Gather<'elem, 'o>(steps: WorkflowStep list, executor: Executor<'elem list, 'o>) : WorkflowStep list =
         steps @ [WorkflowInternal.wrapGather executor]
 
+    /// Sets retry count for the previous step
+    [<CustomOperation("retry")>]
+    member _.Retry(steps: WorkflowStep list, count: int) : WorkflowStep list =
+        steps |> WorkflowInternal.modifyLastWithResilience (fun s -> { s with RetryCount = count })
+
+    /// Sets backoff strategy for retries on the previous step
+    [<CustomOperation("backoff")>]
+    member _.Backoff(steps: WorkflowStep list, strategy: BackoffStrategy) : WorkflowStep list =
+        steps |> WorkflowInternal.modifyLastWithResilience (fun s -> { s with Backoff = strategy })
+
+    /// Sets timeout for the previous step
+    [<CustomOperation("timeout")>]
+    member _.Timeout(steps: WorkflowStep list, duration: TimeSpan) : WorkflowStep list =
+        steps |> WorkflowInternal.modifyLastWithResilience (fun s -> { s with Timeout = Some duration })
+
+    /// Sets fallback executor for the previous step (used if all retries fail)
+    [<CustomOperation("fallback")>]
+    member _.Fallback<'i, 'o>(steps: WorkflowStep list, executor: Executor<'i, 'o>) : WorkflowStep list =
+        let fallbackFn (input: obj) (ctx: WorkflowContext) : Async<obj> = async {
+            let typedInput = unbox<'i> input
+            let! result = executor.Execute typedInput ctx
+            return box result
+        }
+        steps |> WorkflowInternal.modifyLastWithResilience (fun s -> { s with Fallback = Some fallbackFn })
+
     /// Builds the final workflow definition
     member _.Run(steps: WorkflowStep list) : WorkflowDef<'input, 'output> =
         { Steps = steps }
@@ -176,6 +239,73 @@ module WorkflowCE =
 [<RequireQualifiedAccess>]
 module Workflow =
 
+    /// Calculates delay for a given retry attempt based on backoff strategy
+    let private calculateDelay (strategy: BackoffStrategy) (attempt: int) : TimeSpan =
+        match strategy with
+        | Immediate -> TimeSpan.Zero
+        | Linear delay -> delay
+        | Exponential (initial, multiplier) ->
+            let factor = Math.Pow(multiplier, float (attempt - 1))
+            TimeSpan.FromMilliseconds(initial.TotalMilliseconds * factor)
+
+    /// Executes an async operation with timeout
+    let private withTimeout (timeout: TimeSpan) (operation: Async<'a>) : Async<'a> =
+        async {
+            let! child = Async.StartChild(operation, int timeout.TotalMilliseconds)
+            return! child
+        }
+
+    /// Executes an inner step (non-resilient)
+    let rec private executeInnerStep (step: WorkflowStep) (input: obj) (ctx: WorkflowContext) : Async<obj> =
+        async {
+            match step with
+            | Step (_, execute) ->
+                return! execute input ctx
+            | Route router ->
+                return! router input ctx
+            | Parallel executors ->
+                let! results =
+                    executors
+                    |> List.map (fun exec -> exec input ctx)
+                    |> Async.Parallel
+                return (results |> Array.toList) :> obj
+            | Resilient (settings, inner) ->
+                return! executeWithResilience settings inner input ctx
+        }
+
+    /// Executes a step with resilience (retry, timeout, fallback)
+    and private executeWithResilience (settings: ResilienceSettings) (inner: WorkflowStep) (input: obj) (ctx: WorkflowContext) : Async<obj> =
+        let rec attemptWithRetry (remainingRetries: int) (attempt: int) : Async<obj> =
+            async {
+                try
+                    // Apply timeout if specified
+                    let operation = executeInnerStep inner input ctx
+                    let timedOperation =
+                        match settings.Timeout with
+                        | Some t -> withTimeout t operation
+                        | None -> operation
+
+                    return! timedOperation
+                with ex ->
+                    if remainingRetries > 0 then
+                        // Calculate and apply backoff delay
+                        let delay = calculateDelay settings.Backoff attempt
+                        if delay > TimeSpan.Zero then
+                            do! Async.Sleep (int delay.TotalMilliseconds)
+
+                        // Retry
+                        return! attemptWithRetry (remainingRetries - 1) (attempt + 1)
+                    else
+                        // All retries exhausted - try fallback or rethrow
+                        match settings.Fallback with
+                        | Some fallbackFn ->
+                            return! fallbackFn input ctx
+                        | None ->
+                            return raise ex
+            }
+
+        attemptWithRetry settings.RetryCount 1
+
     /// Runs a workflow with the given input
     let run<'input, 'output> (input: 'input) (workflow: WorkflowDef<'input, 'output>) : Async<'output> =
         async {
@@ -183,21 +313,8 @@ module Workflow =
             let mutable current: obj = input :> obj
 
             for step in workflow.Steps do
-                match step with
-                | Step (_, execute) ->
-                    let! result = execute current ctx
-                    current <- result
-                | Route router ->
-                    let! result = router current ctx
-                    current <- result
-                | Parallel executors ->
-                    // Run all executors concurrently with the same input
-                    let! results =
-                        executors
-                        |> List.map (fun exec -> exec current ctx)
-                        |> Async.Parallel
-                    // Output is a list of all results
-                    current <- (results |> Array.toList) :> obj
+                let! result = executeInnerStep step current ctx
+                current <- result
 
             return current :?> 'output
         }
