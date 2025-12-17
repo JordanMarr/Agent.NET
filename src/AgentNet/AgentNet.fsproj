@@ -10,6 +10,7 @@
     <Compile Include="Tool.fs" />
     <Compile Include="Agent.fs" />
     <Compile Include="AgentFramework.fs" />
+    <Compile Include="Workflow.fs" />
   </ItemGroup>
 
   <ItemGroup>
