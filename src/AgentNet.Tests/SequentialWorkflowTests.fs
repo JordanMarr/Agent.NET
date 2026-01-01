@@ -82,6 +82,23 @@ type SequentialWorkflowTests() =
         // Verify all three agents were called
         stubClient.CallHistory.Length |> should equal 3
 
+    /// Verify that the workflow type is correctly inferred as WorkflowDef<string, string>
+    [<Test>]
+    member _.``Workflow output type is correctly inferred from last step``() =
+        let step1 = Executor.fromFn "Step1" (fun (input: string) -> input.Length)
+        let step2 = Executor.fromFn "Step2" (fun (len: int) -> len > 5)
+
+        let myWorkflow = workflow {
+            start step1
+            next step2
+        }
+
+        // This compiles without explicit type annotation, proving type inference works
+        // myWorkflow : WorkflowDef<string, bool>
+        let result: bool = Workflow.runSync "hello world" myWorkflow
+
+        result |> should equal true
+
     /// Additional test: Verify that output from each step flows correctly to the next
     [<Test>]
     member _.``Each step receives output from previous step``() =

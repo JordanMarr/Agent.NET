@@ -106,6 +106,11 @@ type WorkflowDef<'input, 'output> = {
     Steps: WorkflowStep list
 }
 
+/// Internal state carrier that threads type information through the builder
+type WorkflowState<'input, 'output> = {
+    Steps: WorkflowStep list
+}
+
 
 /// Internal module for workflow building
 module internal WorkflowInternal =
@@ -169,64 +174,66 @@ module internal WorkflowInternal =
 /// Builder for the workflow computation expression
 type WorkflowBuilder() =
 
-    member _.Yield(_) : WorkflowStep list = []
+    member _.Yield(_) : WorkflowState<'a, 'a> = { Steps = [] }
 
     /// Starts the workflow with an executor
     [<CustomOperation("start")>]
-    member _.Start<'i, 'o>(steps: WorkflowStep list, executor: Executor<'i, 'o>) : WorkflowStep list =
-        steps @ [WorkflowInternal.wrapExecutor executor]
+    member _.Start(state: WorkflowState<_, _>, executor: Executor<'i, 'o>) : WorkflowState<'i, 'o> =
+        { Steps = state.Steps @ [WorkflowInternal.wrapExecutor executor] }
 
     /// Adds the next step to the workflow
+    /// The executor's input type must match the previous step's output type
     [<CustomOperation("next")>]
-    member _.Next<'i, 'o>(steps: WorkflowStep list, executor: Executor<'i, 'o>) : WorkflowStep list =
-        steps @ [WorkflowInternal.wrapExecutor executor]
+    member _.Next(state: WorkflowState<'input, 'middle>, executor: Executor<'middle, 'output>) : WorkflowState<'input, 'output> =
+        { Steps = state.Steps @ [WorkflowInternal.wrapExecutor executor] }
 
     /// Routes to different executors based on the previous step's output
     /// Use with pattern matching: route (function | CaseA -> exec1 | CaseB -> exec2)
     [<CustomOperation("route")>]
-    member _.Route<'a, 'b>(steps: WorkflowStep list, router: 'a -> Executor<'a, 'b>) : WorkflowStep list =
-        steps @ [WorkflowInternal.wrapRouter router]
+    member _.Route(state: WorkflowState<'input, 'middle>, router: 'middle -> Executor<'middle, 'output>) : WorkflowState<'input, 'output> =
+        { Steps = state.Steps @ [WorkflowInternal.wrapRouter router] }
 
     /// Runs multiple executors in parallel on the same input (fan-out)
     /// Output becomes a list of all results
     [<CustomOperation("fanOut")>]
-    member _.FanOut<'i, 'o>(steps: WorkflowStep list, executors: Executor<'i, 'o> list) : WorkflowStep list =
-        steps @ [WorkflowInternal.wrapParallel executors]
+    member _.FanOut(state: WorkflowState<'input, 'middle>, executors: Executor<'middle, 'o> list) : WorkflowState<'input, 'o list> =
+        { Steps = state.Steps @ [WorkflowInternal.wrapParallel executors] }
 
     /// Aggregates parallel results into a single output (fan-in)
     /// Converts the obj list from fanOut into a typed list for the executor
     [<CustomOperation("fanIn")>]
-    member _.FanIn<'elem, 'o>(steps: WorkflowStep list, executor: Executor<'elem list, 'o>) : WorkflowStep list =
-        steps @ [WorkflowInternal.wrapFanIn executor]
+    member _.FanIn(state: WorkflowState<'input, 'elem list>, executor: Executor<'elem list, 'output>) : WorkflowState<'input, 'output> =
+        { Steps = state.Steps @ [WorkflowInternal.wrapFanIn executor] }
 
     /// Sets retry count for the previous step
     [<CustomOperation("retry")>]
-    member _.Retry(steps: WorkflowStep list, count: int) : WorkflowStep list =
-        steps |> WorkflowInternal.modifyLastWithResilience (fun s -> { s with RetryCount = count })
+    member _.Retry(state: WorkflowState<'input, 'output>, count: int) : WorkflowState<'input, 'output> =
+        { Steps = state.Steps |> WorkflowInternal.modifyLastWithResilience (fun s -> { s with RetryCount = count }) }
 
     /// Sets backoff strategy for retries on the previous step
     [<CustomOperation("backoff")>]
-    member _.Backoff(steps: WorkflowStep list, strategy: BackoffStrategy) : WorkflowStep list =
-        steps |> WorkflowInternal.modifyLastWithResilience (fun s -> { s with Backoff = strategy })
+    member _.Backoff(state: WorkflowState<'input, 'output>, strategy: BackoffStrategy) : WorkflowState<'input, 'output> =
+        { Steps = state.Steps |> WorkflowInternal.modifyLastWithResilience (fun s -> { s with Backoff = strategy }) }
 
     /// Sets timeout for the previous step
     [<CustomOperation("timeout")>]
-    member _.Timeout(steps: WorkflowStep list, duration: TimeSpan) : WorkflowStep list =
-        steps |> WorkflowInternal.modifyLastWithResilience (fun s -> { s with Timeout = Some duration })
+    member _.Timeout(state: WorkflowState<'input, 'output>, duration: TimeSpan) : WorkflowState<'input, 'output> =
+        { Steps = state.Steps |> WorkflowInternal.modifyLastWithResilience (fun s -> { s with Timeout = Some duration }) }
 
     /// Sets fallback executor for the previous step (used if all retries fail)
+    /// The fallback executor must have matching input/output types
     [<CustomOperation("fallback")>]
-    member _.Fallback<'i, 'o>(steps: WorkflowStep list, executor: Executor<'i, 'o>) : WorkflowStep list =
+    member _.Fallback(state: WorkflowState<'input, 'output>, executor: Executor<'middle, 'output>) : WorkflowState<'input, 'output> =
         let fallbackFn (input: obj) (ctx: WorkflowContext) : Async<obj> = async {
-            let typedInput = unbox<'i> input
+            let typedInput = unbox<'middle> input
             let! result = executor.Execute typedInput ctx
             return box result
         }
-        steps |> WorkflowInternal.modifyLastWithResilience (fun s -> { s with Fallback = Some fallbackFn })
+        { Steps = state.Steps |> WorkflowInternal.modifyLastWithResilience (fun s -> { s with Fallback = Some fallbackFn }) }
 
     /// Builds the final workflow definition
-    member _.Run(steps: WorkflowStep list) : WorkflowDef<'input, 'output> =
-        { Steps = steps }
+    member _.Run(state: WorkflowState<'input, 'output>) : WorkflowDef<'input, 'output> =
+        { Steps = state.Steps }
 
 
 /// The workflow computation expression builder instance
