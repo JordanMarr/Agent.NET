@@ -306,10 +306,9 @@ module Workflow =
 
         attemptWithRetry settings.RetryCount 1
 
-    /// Runs a workflow with the given input
-    let run<'input, 'output> (input: 'input) (workflow: WorkflowDef<'input, 'output>) : Async<'output> =
+    /// Runs a workflow with the given input and context
+    let runWithContext<'input, 'output> (input: 'input) (ctx: WorkflowContext) (workflow: WorkflowDef<'input, 'output>) : Async<'output> =
         async {
-            let ctx = WorkflowContext.create ()
             let mutable current: obj = input :> obj
 
             for step in workflow.Steps do
@@ -319,6 +318,18 @@ module Workflow =
             return current :?> 'output
         }
 
+    /// Runs a workflow with the given input (creates a new context)
+    let run<'input, 'output> (input: 'input) (workflow: WorkflowDef<'input, 'output>) : Async<'output> =
+        let ctx = WorkflowContext.create ()
+        runWithContext input ctx workflow
+
     /// Runs a workflow synchronously
     let runSync<'input, 'output> (input: 'input) (workflow: WorkflowDef<'input, 'output>) : 'output =
         workflow |> run input |> Async.RunSynchronously
+
+    /// Converts a workflow to an executor (enables workflow composition)
+    let toExecutor<'input, 'output> (name: string) (workflow: WorkflowDef<'input, 'output>) : Executor<'input, 'output> =
+        {
+            Name = name
+            Execute = fun input ctx -> runWithContext input ctx workflow
+        }
