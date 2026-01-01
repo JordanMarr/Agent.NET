@@ -141,7 +141,7 @@ module internal WorkflowInternal =
         Parallel wrappedFns
 
     /// Wraps an aggregator executor, handling the obj list → typed list conversion
-    let wrapGather<'elem, 'o> (exec: Executor<'elem list, 'o>) : WorkflowStep =
+    let wrapFanIn<'elem, 'o> (exec: Executor<'elem list, 'o>) : WorkflowStep =
         Step (exec.Name, fun input ctx -> async {
             // Input is obj list from parallel, convert each element to the expected type
             let objList = input :?> obj list
@@ -189,15 +189,15 @@ type WorkflowBuilder() =
 
     /// Runs multiple executors in parallel on the same input (fan-out)
     /// Output becomes a list of all results
-    [<CustomOperation("scatter")>]
-    member _.Scatter<'i, 'o>(steps: WorkflowStep list, executors: Executor<'i, 'o> list) : WorkflowStep list =
+    [<CustomOperation("fanOut")>]
+    member _.FanOut<'i, 'o>(steps: WorkflowStep list, executors: Executor<'i, 'o> list) : WorkflowStep list =
         steps @ [WorkflowInternal.wrapParallel executors]
 
     /// Aggregates parallel results into a single output (fan-in)
-    /// Converts the obj list from scatter into a typed list for the executor
-    [<CustomOperation("gather")>]
-    member _.Gather<'elem, 'o>(steps: WorkflowStep list, executor: Executor<'elem list, 'o>) : WorkflowStep list =
-        steps @ [WorkflowInternal.wrapGather executor]
+    /// Converts the obj list from fanOut into a typed list for the executor
+    [<CustomOperation("fanIn")>]
+    member _.FanIn<'elem, 'o>(steps: WorkflowStep list, executor: Executor<'elem list, 'o>) : WorkflowStep list =
+        steps @ [WorkflowInternal.wrapFanIn executor]
 
     /// Sets retry count for the previous step
     [<CustomOperation("retry")>]
