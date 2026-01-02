@@ -12,10 +12,9 @@
 What if building AI agents looked like this?
 
 ```fsharp
-/// <summary>Gets current stock information</summary>
-/// <param name="symbol">The stock ticker symbol (e.g., AAPL)</param>
+/// Gets current stock information
 let getStockInfo (symbol: string) : string =
-    StockService.getQuote symbol  // Your existing C# service works here
+    StockService.GetQuote(symbol)  // Your existing C# service works here
 
 let tool = Tool.createWithDocs <@ getStockInfo @>
 ```
@@ -50,13 +49,12 @@ dotnet add package Agent.NET
 
 ### 1. Define Your Tools
 
-Write normal F# functions with XML documentation:
+Write normal F# functions with XML documentation (summary only or summary and params):
 
 ```fsharp
 open Agent.NET
 
-/// <summary>Gets the current weather for a city</summary>
-/// <param name="city">The city name</param>
+/// Gets the current weather for a city
 let getWeather (city: string) : string =
     let weather = WeatherApi.fetch city
     $"The weather in {city} is {weather}"
@@ -160,7 +158,7 @@ Use your agent:
 let! response = stockAdvisor.Chat("Compare AAPL and MSFT performance")
 
 // Access the underlying config if needed
-printfn "Agent: %s" stockAdvisor.Config.Name
+printfn $"Agent: {stockAdvisor.Config.Name}"
 ```
 
 ### Workflows: Computation Expression for Orchestration
@@ -221,7 +219,7 @@ Build fault-tolerant workflows:
 let resilientWorkflow = workflow {
     start primaryAgent
     retry 3                              // Retry up to 3 times
-    timeout (TimeSpan.FromSeconds 30.)   // Timeout after 30s
+    timeout (TimeSpan.FromSeconds 30.0)  // Timeout after 30s
     fallback backupAgent                 // Use backup if all else fails
 }
 ```
@@ -234,7 +232,7 @@ let robustAnalysis = workflow {
     fanOut [analyst1; analyst2; analyst3]
     retry 2
     fanIn combiner
-    timeout (TimeSpan.FromMinutes 5.)
+    timeout (TimeSpan.FromMinutes 5.0)
     fallback cachedResults
 }
 ```
@@ -266,9 +264,123 @@ let result = Workflow.runSync "initial input" myWorkflow
 let! result = Workflow.run "initial input" myWorkflow
 ```
 
+<details>
+<summary><strong>Complete Workflow Reference (with C# comparison)</strong></summary>
+
+### All Workflow Patterns
+
+| Pattern | Agent.NET | Description |
+|---------|-----------|-------------|
+| **Sequential** | `start a` ➔ `next b` ➔ `next c` | Chain steps in order |
+| **Parallel** | `fanOut [a; b; c]` | Execute multiple steps simultaneously |
+| **Aggregate** | `fanIn combiner` | Combine parallel results |
+| **Routing** | `route (function \| Case1 -> a \| Case2 -> b)` | Conditional branching |
+| **Retry** | `retry 3` | Retry on failure |
+| **Backoff** | `backoff Backoff.Exponential` | Delay strategy between retries |
+| **Timeout** | `timeout (TimeSpan.FromSeconds 30.)` | Fail if too slow |
+| **Fallback** | `fallback backupStep` | Alternative on failure |
+| **Compose** | `next (innerWorkflow \|> Workflow.toExecutor)` | Nest workflows |
+
+### Side-by-Side: Agent.NET vs C# MAF
+
+**Sequential Pipeline**
+
+*Agent.NET:*
+```fsharp
+let pipeline = workflow {
+    start researcher
+    next analyst
+    next writer
+}
+```
+
+*C# with MAF:*
+```csharp
+var graph = new AgentGraphBuilder();
+graph.AddNode("researcher", researcherAgent);
+graph.AddNode("analyst", analystAgent);
+graph.AddNode("writer", writerAgent);
+graph.AddEdge("researcher", "analyst");
+graph.AddEdge("analyst", "writer");
+graph.AddConditionalEdge("writer", _ => EndWorkflow);
+var workflow = graph.Build();
+```
+
+---
+
+**Parallel Fan-Out / Fan-In**
+
+*Agent.NET:*
+```fsharp
+let analysis = workflow {
+    start loader
+    fanOut [technical; fundamental; sentiment]
+    fanIn summarizer
+}
+```
+
+*C# with MAF:*
+```csharp
+var graph = new AgentGraphBuilder();
+graph.AddNode("loader", loaderAgent);
+graph.AddNode("technical", technicalAgent);
+graph.AddNode("fundamental", fundamentalAgent);
+graph.AddNode("sentiment", sentimentAgent);
+graph.AddNode("summarizer", summarizerAgent);
+graph.AddEdge("loader", "technical");
+graph.AddEdge("loader", "fundamental");
+graph.AddEdge("loader", "sentiment");
+graph.AddEdge("technical", "summarizer");
+graph.AddEdge("fundamental", "summarizer");
+graph.AddEdge("sentiment", "summarizer");
+graph.AddConditionalEdge("summarizer", _ => EndWorkflow);
+var workflow = graph.Build();
+```
+
+---
+
+**Resilience**
+
+*Agent.NET:*
+```fsharp
+let resilient = workflow {
+    start unreliableService
+    retry 3
+    backoff Backoff.Exponential
+    timeout (TimeSpan.FromSeconds 30.)
+    fallback cachedResult
+}
+```
+
+*C# with MAF + Polly:*
+```csharp
+var retryPolicy = Policy
+    .Handle<Exception>()
+    .WaitAndRetryAsync(3, attempt =>
+        TimeSpan.FromSeconds(Math.Pow(2, attempt)));
+
+var timeoutPolicy = Policy
+    .TimeoutAsync(TimeSpan.FromSeconds(30));
+
+var fallbackPolicy = Policy<string>
+    .Handle<Exception>()
+    .FallbackAsync(cachedResult);
+
+var combinedPolicy = Policy.WrapAsync(fallbackPolicy, timeoutPolicy, retryPolicy);
+
+var result = await combinedPolicy.ExecuteAsync(async () =>
+    await unreliableService.RunAsync(input));
+```
+
+---
+
+*The patterns are the same. The ceremony is not.*
+
+</details>
+
 ### Result Workflows: Railway-Oriented Programming
 
-For workflows where any step can fail, use `resultWorkflow` for automatic short-circuit error handling:
+For workflows where any step can fail, use `resultWorkflow` for automatic short-circuit handling of errors:
 
 ```fsharp
 type ValidationError =
