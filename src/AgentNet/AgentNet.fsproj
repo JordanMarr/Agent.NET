@@ -6,6 +6,24 @@
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
   </PropertyGroup>
 
+  <!-- NuGet Package Metadata -->
+  <PropertyGroup>
+    <PackageId>Agent.NET</PackageId>
+    <Version>1.0.0-alpha.1</Version>
+    <Authors>Jordan Marr</Authors>
+    <Description>A beautiful F# library for building AI agents on .NET. Wraps Microsoft Agent Framework with idiomatic F# APIs using quotation-based tools, pipeline-style agents, and computation expression workflows.</Description>
+    <PackageTags>fsharp;ai;agents;llm;microsoft-agent-framework;workflows</PackageTags>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageProjectUrl>https://github.com/JordanMarr/Agent.NET</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/JordanMarr/Agent.NET</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="../../README.md" Pack="true" PackagePath="/" />
+  </ItemGroup>
+
   <ItemGroup>
     <Compile Include="Tool.fs" />
     <Compile Include="Agent.fs" />
