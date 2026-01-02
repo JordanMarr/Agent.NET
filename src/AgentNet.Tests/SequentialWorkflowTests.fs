@@ -64,23 +64,21 @@ let ``Agent executors integrate with workflow DSL``() =
     stubClient.SetResponse("RESEARCH_RESULT:", "ANALYSIS_RESULT: Data is significant.")
     stubClient.SetResponse("ANALYSIS_RESULT:", "FINAL_REPORT: Conclusion reached.")
 
-    // Create agents using the stub client with new syntax
-    let researcherAgent = agent stubClient {
-        instructions "You are a researcher. Research the given topic."
-    }
+    // Create agent executors using the stub client
+    let researcher = 
+        Agent.create "You are a researcher. Research the given topic."
+        |> Agent.build stubClient
+        |> Executor.fromAgent "Researcher"
 
-    let analyzerAgent = agent stubClient {
-        instructions "You are an analyzer. Analyze the given research."
-    }
+    let analyzer = 
+        Agent.create "You are an analyzer. Analyze the given research."
+        |> Agent.build stubClient
+        |> Executor.fromAgent "Analyzer"
 
-    let writerAgent = agent stubClient {
-        instructions "You are a writer. Write a report from the analysis."
-    }
-
-    // Create executors from agents
-    let researcher = Executor.fromAgent "Researcher" researcherAgent
-    let analyzer = Executor.fromAgent "Analyzer" analyzerAgent
-    let writer = Executor.fromAgent "Writer" writerAgent
+    let writer = 
+        Agent.create "You are a writer. Write a report from the analysis."
+        |> Agent.build stubClient
+        |> Executor.fromAgent "Writer"
 
     // Build the workflow using the DSL
     let myWorkflow = workflow {
