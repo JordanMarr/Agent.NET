@@ -3,7 +3,7 @@
 module AgentNet.Tests.ParallelWorkflowTests
 
 open NUnit.Framework
-open FsUnit
+open Swensen.Unquote
 open AgentNet
 
 // Domain types for parallel tests
@@ -45,12 +45,12 @@ let ``FanOut executes all executors and FanIn aggregates results``() =
     let result = Workflow.runSync "AAPL" parallelWorkflow
 
     // Assert
-    result.Reports.Length |> should equal 3
-    result.Reports |> List.exists (fun r -> r.Analyst = "Technical") |> should equal true
-    result.Reports |> List.exists (fun r -> r.Analyst = "Fundamental") |> should equal true
-    result.Reports |> List.exists (fun r -> r.Analyst = "Sentiment") |> should equal true
-    result.Consensus |> should equal "Buy"
-    result.AverageScore |> should equal 7.0
+    result.Reports.Length =! 3
+    result.Reports |> List.exists (fun r -> r.Analyst = "Technical") =! true
+    result.Reports |> List.exists (fun r -> r.Analyst = "Fundamental") =! true
+    result.Reports |> List.exists (fun r -> r.Analyst = "Sentiment") =! true
+    result.Consensus =! "Buy"
+    result.AverageScore =! 7.0
 
 [<Test>]
 let ``FanOut with two executors``() =
@@ -70,7 +70,7 @@ let ``FanOut with two executors``() =
     let result = Workflow.runSync 5 parallelWorkflow
 
     // Assert
-    result |> should equal 50
+    result =! 50
 
 [<Test>]
 let ``FanOut preserves order of results``() =
@@ -94,7 +94,7 @@ let ``FanOut preserves order of results``() =
     let result = Workflow.runSync "X" parallelWorkflow
 
     // Assert: Results should be in executor order
-    result |> should equal "0:X,1:X,2:X"
+    result =! "0:X,1:X,2:X"
 
 [<Test>]
 let ``FanOut followed by additional processing``() =
@@ -119,7 +119,7 @@ let ``FanOut followed by additional processing``() =
     let result = Workflow.runSync 10 parallelWorkflow
 
     // Assert
-    result |> should equal "Total: 50"
+    result =! "Total: 50"
 
 [<Test>]
 let ``FanOut with custom record types``() =
@@ -145,4 +145,4 @@ let ``FanOut with custom record types``() =
     let result = Workflow.runSync "DATA" parallelWorkflow
 
     // Assert
-    result |> should equal "DATA-A|DATA-B"
+    result =! "DATA-A|DATA-B"

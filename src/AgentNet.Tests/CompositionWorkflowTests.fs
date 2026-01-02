@@ -3,7 +3,7 @@
 module AgentNet.Tests.CompositionWorkflowTests
 
 open NUnit.Framework
-open FsUnit
+open Swensen.Unquote
 open AgentNet
 
 // Domain types for composition tests
@@ -49,10 +49,10 @@ let ``Nested workflow executes as single step``() =
     let result = Workflow.runSync "AI agents" outerWorkflow
 
     // Assert
-    result.Research.Topic |> should equal "AI agents"
-    result.Research.Findings.Length |> should equal 3
-    result.Conclusion |> should equal "Positive outlook"
-    result.Confidence |> should equal 0.85
+    result.Research.Topic =! "AI agents"
+    result.Research.Findings.Length =! 3
+    result.Conclusion =! "Positive outlook"
+    result.Confidence =! 0.85
 
 [<Test>]
 let ``Data flows correctly through nested workflow``() =
@@ -92,11 +92,11 @@ let ``Data flows correctly through nested workflow``() =
     let result = Workflow.runSync "hello" composedWorkflow
 
     // Assert: Verify data flow
-    step1Input |> should equal "hello"
-    innerInput |> should equal "hello-step1"
-    innerOutput |> should equal "HELLO-STEP1"
-    step2Input |> should equal "HELLO-STEP1"
-    result |> should equal "HELLO-STEP1-step2"
+    step1Input =! "hello"
+    innerInput =! "hello-step1"
+    innerOutput =! "HELLO-STEP1"
+    step2Input =! "HELLO-STEP1"
+    result =! "HELLO-STEP1-step2"
 
 [<Test>]
 let ``Multiple levels of nesting work correctly``() =
@@ -134,7 +134,7 @@ let ``Multiple levels of nesting work correctly``() =
     let result = Workflow.runSync 5 level1Workflow
 
     // Assert
-    result |> should equal 37
+    result =! 37
 
 [<Test>]
 let ``Nested workflow with custom domain types``() =
@@ -175,10 +175,10 @@ let ``Nested workflow with custom domain types``() =
     let result = Workflow.runSync "sensor-data" fullPipeline
 
     // Assert
-    result.Data.Cleaned |> should equal [1; 2; 3; 4; 5]  // -1 and 100 removed
-    result.Mean |> should equal 3.0
-    result.Max |> should equal 5
-    result.Min |> should equal 1
+    result.Data.Cleaned =! [1; 2; 3; 4; 5]  // -1 and 100 removed
+    result.Mean =! 3.0
+    result.Max =! 5
+    result.Min =! 1
 
 [<Test>]
 let ``Nested workflow can be reused in multiple outer workflows``() =
@@ -215,9 +215,9 @@ let ``Nested workflow can be reused in multiple outer workflows``() =
     let upperResult = Workflow.runSync 42 withUpper
 
     // Assert
-    prefixResult |> should equal "PREFIX:[42]"
-    suffixResult |> should equal "[42]:SUFFIX"
-    upperResult |> should equal "[42]"  // Already uppercase
+    prefixResult =! "PREFIX:[42]"
+    suffixResult =! "[42]:SUFFIX"
+    upperResult =! "[42]"  // Already uppercase
 
 [<Test>]
 let ``Nested workflow with parallel fanOut inside``() =
@@ -255,7 +255,7 @@ let ``Nested workflow with parallel fanOut inside``() =
     let result = Workflow.runSync 5 outerWorkflow
 
     // Assert
-    result |> should equal "Result: 210"
+    result =! "Result: 210"
 
 [<Test>]
 let ``Full report generation pipeline with composition``() =
@@ -297,8 +297,8 @@ let ``Full report generation pipeline with composition``() =
     let result = Workflow.runSync "Renewable Energy" reportWorkflow
 
     // Assert
-    result.Analysis.Research.Topic |> should equal "Renewable Energy"
-    result.Analysis.Confidence |> should equal 0.9
-    result.Summary |> should contain "Renewable Energy"
-    result.Recommendations.Length |> should equal 2
+    result.Analysis.Research.Topic =! "Renewable Energy"
+    result.Analysis.Confidence =! 0.9
+    result.Summary.Contains("Renewable Energy") =! true
+    result.Recommendations.Length =! 2
 

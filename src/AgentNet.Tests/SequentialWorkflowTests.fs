@@ -3,7 +3,7 @@
 module AgentNet.Tests.SequentialWorkflowTests
 
 open NUnit.Framework
-open FsUnit
+open Swensen.Unquote
 open AgentNet
 open AgentNet.Tests.Stubs
 
@@ -32,7 +32,7 @@ let ``Simple sequential workflow executes in order``() =
     let result = Workflow.runSync "F# agents" myWorkflow
 
     // Assert: Verify the output shows correct sequencing
-    result |> should equal "Report: Analysis: Research on F# agents"
+    result =! "Report: Analysis: Research on F# agents"
 
 /// Integration test: validates agent CE -> Build -> Executor.fromAgent -> workflow path
 [<Test>]
@@ -73,10 +73,10 @@ let ``Agent executors integrate with workflow DSL``() =
     let result = Workflow.runSync "Investigate: AI agents" myWorkflow
 
     // Assert: Verify the stub was called and returned expected response
-    result |> should equal "FINAL_REPORT: Conclusion reached."
+    result =! "FINAL_REPORT: Conclusion reached."
 
     // Verify all three agents were called
-    stubClient.CallHistory.Length |> should equal 3
+    stubClient.CallHistory.Length =! 3
 
 /// Verify that the workflow type is correctly inferred as WorkflowDef<string, string>
 [<Test>]
@@ -93,7 +93,7 @@ let ``Workflow output type is correctly inferred from last step``() =
     // myWorkflow : WorkflowDef<string, bool>
     let result: bool = Workflow.runSync "hello world" myWorkflow
 
-    result |> should equal true
+    result =! true
 
 /// Additional test: Verify that output from each step flows correctly to the next
 [<Test>]
@@ -125,7 +125,7 @@ let ``Each step receives output from previous step``() =
     let result = Workflow.runSync "initial" myWorkflow
 
     // Assert: Verify data flow
-    step1Input |> should equal "initial"
-    step2Input |> should equal "output1"
-    step3Input |> should equal "output2"
-    result |> should equal "output3"
+    step1Input =! "initial"
+    step2Input =! "output1"
+    step3Input =! "output2"
+    result =! "output3"

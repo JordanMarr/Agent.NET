@@ -3,7 +3,7 @@
 module AgentNet.Tests.RoutingWorkflowTests
 
 open NUnit.Framework
-open FsUnit
+open Swensen.Unquote
 open AgentNet
 
 // Domain types for routing tests
@@ -44,14 +44,9 @@ let ``Route selects correct executor based on DU case``() =
     }
 
     // Act & Assert: Test each branch
-    Workflow.runSync "I am confident about this" routingWorkflow
-    |> should equal "Processed with high confidence"
-
-    Workflow.runSync "I am unsure about this" routingWorkflow
-    |> should equal "Processed with low confidence"
-
-    Workflow.runSync "No idea" routingWorkflow
-    |> should equal "Needs manual review"
+    Workflow.runSync "I am confident about this" routingWorkflow =! "Processed with high confidence"
+    Workflow.runSync "I am unsure about this" routingWorkflow =! "Processed with low confidence"
+    Workflow.runSync "No idea" routingWorkflow =! "Needs manual review"
 
 [<Test>]
 let ``Route can extract data from DU cases``() =
@@ -79,9 +74,9 @@ let ``Route can extract data from DU cases``() =
     }
 
     // Act & Assert
-    Workflow.runSync 95 routingWorkflow |> should equal "High: 0.95"
-    Workflow.runSync 65 routingWorkflow |> should equal "Low: 0.65"
-    Workflow.runSync 30 routingWorkflow |> should equal "Inconclusive: N/A"
+    Workflow.runSync 95 routingWorkflow =! "High: 0.95"
+    Workflow.runSync 65 routingWorkflow =! "Low: 0.65"
+    Workflow.runSync 30 routingWorkflow =! "Inconclusive: N/A"
 
 [<Test>]
 let ``Route with category-based content handling``() =
@@ -94,12 +89,9 @@ let ``Route with category-based content handling``() =
         else
             { Title = title; Category = General })
 
-    let techWriter = Executor.fromFn "TechWriter" (fun (article: Article) ->
-        { Article = article; Handler = "TechDesk" })
-    let financeWriter = Executor.fromFn "FinanceWriter" (fun (article: Article) ->
-        { Article = article; Handler = "FinanceDesk" })
-    let generalWriter = Executor.fromFn "GeneralWriter" (fun (article: Article) ->
-        { Article = article; Handler = "GeneralDesk" })
+    let techWriter = Executor.fromFn "TechWriter" (fun (article: Article) -> { Article = article; Handler = "TechDesk" })
+    let financeWriter = Executor.fromFn "FinanceWriter" (fun (article: Article) -> { Article = article; Handler = "FinanceDesk" })
+    let generalWriter = Executor.fromFn "GeneralWriter" (fun (article: Article) -> { Article = article; Handler = "GeneralDesk" })
 
     let routingWorkflow = workflow {
         start categorize
@@ -112,13 +104,13 @@ let ``Route with category-based content handling``() =
 
     // Act & Assert
     let techResult = Workflow.runSync "New AI breakthrough" routingWorkflow
-    techResult.Handler |> should equal "TechDesk"
+    techResult.Handler =! "TechDesk"
 
     let financeResult = Workflow.runSync "Stock Market update" routingWorkflow
-    financeResult.Handler |> should equal "FinanceDesk"
+    financeResult.Handler =! "FinanceDesk"
 
     let generalResult = Workflow.runSync "Weather forecast" routingWorkflow
-    generalResult.Handler |> should equal "GeneralDesk"
+    generalResult.Handler =! "GeneralDesk"
 
 [<Test>]
 let ``Route followed by additional steps``() =
@@ -127,10 +119,8 @@ let ``Route followed by additional steps``() =
         if n > 0 then HighConfidence (float n)
         else LowConfidence (float n))
 
-    let processPositive = Executor.fromFn "ProcessPositive" (fun (_: AnalysisResult) ->
-        "positive")
-    let processNegative = Executor.fromFn "ProcessNegative" (fun (_: AnalysisResult) ->
-        "negative")
+    let processPositive = Executor.fromFn "ProcessPositive" (fun (_: AnalysisResult) -> "positive")
+    let processNegative = Executor.fromFn "ProcessNegative" (fun (_: AnalysisResult) -> "negative")
 
     let format = Executor.fromFn "Format" (fun (label: string) ->
         $"Result: {label.ToUpper()}")
@@ -144,5 +134,5 @@ let ``Route followed by additional steps``() =
     }
 
     // Act & Assert
-    Workflow.runSync 5 routingWorkflow |> should equal "Result: POSITIVE"
-    Workflow.runSync -3 routingWorkflow |> should equal "Result: NEGATIVE"
+    Workflow.runSync 5 routingWorkflow =! "Result: POSITIVE"
+    Workflow.runSync -3 routingWorkflow =! "Result: NEGATIVE"

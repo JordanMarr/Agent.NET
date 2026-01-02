@@ -3,7 +3,7 @@
 module AgentNet.Tests.ResultWorkflowTests
 
 open NUnit.Framework
-open FsUnit
+open Swensen.Unquote
 open AgentNet
 
 // Domain types for result workflow tests
@@ -43,9 +43,9 @@ let ``Result workflow succeeds when all steps return Ok``() =
     // Assert
     match result with
     | Ok processed ->
-        processed.WordCount |> should equal 4
-        processed.Summary |> should equal "Document with 4 words"
-        processed.Doc.IsValid |> should equal true
+        processed.WordCount =! 4
+        processed.Summary =! "Document with 4 words"
+        processed.Doc.IsValid =! true
     | Error _ ->
         Assert.Fail "Expected Ok result"
 
@@ -78,14 +78,14 @@ let ``Result workflow short-circuits on first Error``() =
     let result = ResultWorkflow.runSync "test input" resultWf
 
     // Assert
-    step1Called |> should equal true
-    step2Called |> should equal true
-    step3Called |> should equal false  // Should NOT be called due to short-circuit
+    step1Called =! true
+    step2Called =! true
+    step3Called =! false  // Should NOT be called due to short-circuit
 
     match result with
     | Error (ValidationError (field, reason)) ->
-        field |> should equal "content"
-        reason |> should equal "Content is invalid"
+        field =! "content"
+        reason =! "Content is invalid"
     | _ ->
         Assert.Fail "Expected ValidationError"
 
@@ -102,7 +102,7 @@ let ``ResultExecutor.map wraps return value in Ok``() =
     let result = ResultWorkflow.runSync 21 resultWf
 
     // Assert
-    result |> should equal (Ok 42)
+    result =! (Ok 42)
 
 [<Test>]
 let ``ResultExecutor.bind passes Result through unchanged``() =
@@ -117,13 +117,13 @@ let ``ResultExecutor.bind passes Result through unchanged``() =
     // Act & Assert: Positive case
     let positiveResult = ResultWorkflow.runSync 10 positiveWf
     match positiveResult with
-    | Ok value -> value |> should equal "Valid: 10"
+    | Ok value -> value =! "Valid: 10"
     | Error _ -> Assert.Fail "Expected Ok result"
 
     // Act & Assert: Negative case
     let negativeResult = ResultWorkflow.runSync -5 negativeWf
     match negativeResult with
-    | Error (ParseError msg) -> msg |> should equal "Value must be positive"
+    | Error (ParseError msg) -> msg =! "Value must be positive"
     | _ -> Assert.Fail "Expected ParseError"
 
 [<Test>]
@@ -144,8 +144,8 @@ let ``ResultExecutor.mapAsync wraps async result in Ok``() =
     // Assert
     match result with
     | Ok doc ->
-        doc.Id |> should equal "doc-123"
-        doc.Content |> should equal "Content for doc-123"
+        doc.Id =! "doc-123"
+        doc.Content =! "Content for doc-123"
     | Error _ ->
         Assert.Fail "Expected Ok result"
 
@@ -166,13 +166,13 @@ let ``ResultExecutor.bindAsync passes async Result through``() =
     // Act & Assert: Long content passes
     let longResult = ResultWorkflow.runSync { Id = "1"; Content = "This is long enough" } longDocWf
     match longResult with
-    | Ok validated -> validated.IsValid |> should equal true
+    | Ok validated -> validated.IsValid =! true
     | Error _ -> Assert.Fail "Expected Ok for long content"
 
     // Act & Assert: Short content fails
     let shortResult = ResultWorkflow.runSync { Id = "2"; Content = "Hi" } shortDocWf
     match shortResult with
-    | Error (ValidationError (_, reason)) -> reason |> should equal "Content too short"
+    | Error (ValidationError (_, reason)) -> reason =! "Content too short"
     | _ -> Assert.Fail "Expected ValidationError for short content"
 
 [<Test>]
@@ -212,7 +212,7 @@ let ``Result workflow with multiple error types in chain``() =
     // Act & Assert: Success case
     let successResult = ResultWorkflow.runSync "valid content" resultWf
     match successResult with
-    | Ok processed -> processed.Summary |> should equal "Saved"
+    | Ok processed -> processed.Summary =! "Saved"
     | _ -> Assert.Fail "Expected Ok"
 
 [<Test>]
@@ -235,8 +235,8 @@ let ``Result workflow output type is correctly inferred``() =
     // Assert
     match result with
     | Ok doc ->
-        doc.Id |> should equal "result"
-        doc.Content |> should equal "Long"  // "Hello World!" has 12 chars > 5
+        doc.Id =! "result"
+        doc.Content =! "Long"  // "Hello World!" has 12 chars > 5
     | Error _ ->
         Assert.Fail "Expected Ok result"
 
@@ -272,8 +272,8 @@ let ``Result workflow can be composed using toExecutor``() =
     // Assert
     match result with
     | Ok processed ->
-        processed.Doc.Doc.Content |> should equal "HELLO WORLD"  // Inner workflow uppercased
-        processed.Summary |> should equal "Processed"
+        processed.Doc.Doc.Content =! "HELLO WORLD"  // Inner workflow uppercased
+        processed.Summary =! "Processed"
     | Error _ ->
         Assert.Fail "Expected Ok result"
 

@@ -4,7 +4,7 @@ module AgentNet.Tests.ResilienceWorkflowTests
 
 open System
 open NUnit.Framework
-open FsUnit
+open Swensen.Unquote
 open AgentNet
 
 // Domain types for resilience tests
@@ -31,8 +31,8 @@ let ``Retry executes step multiple times on failure then succeeds``() =
     let result = Workflow.runSync "test-123" resilienceWorkflow
 
     // Assert
-    result.Status |> should equal "Success"
-    result.Attempts |> should equal 3
+    result.Status =! "Success"
+    result.Attempts =! 3
 
 [<Test>]
 let ``Retry stops immediately on success``() =
@@ -53,7 +53,7 @@ let ``Retry stops immediately on success``() =
     let result = Workflow.runSync "test-456" resilienceWorkflow
 
     // Assert: Should only execute once since it succeeds
-    result.Attempts |> should equal 1
+    result.Attempts =! 1
 
 [<Test>]
 let ``Retry with zero retries fails immediately``() =
@@ -69,7 +69,7 @@ let ``Retry with zero retries fails immediately``() =
 
     // Act & Assert
     (fun () -> Workflow.runSync "test" resilienceWorkflow |> ignore)
-    |> should throw typeof<Exception>
+    |> Assert.Throws<Exception> |> ignore
 
 [<Test>]
 let ``Fallback executes when all retries exhausted``() =
@@ -94,8 +94,8 @@ let ``Fallback executes when all retries exhausted``() =
     let result = Workflow.runSync "test-789" resilienceWorkflow
 
     // Assert
-    result.Status |> should equal "Fallback"
-    primaryAttempts |> should equal 3  // Initial + 2 retries
+    result.Status =! "Fallback"
+    primaryAttempts =! 3  // Initial + 2 retries
 
 [<Test>]
 let ``Fallback not used when primary succeeds``() =
@@ -120,8 +120,8 @@ let ``Fallback not used when primary succeeds``() =
     let result = Workflow.runSync "test" resilienceWorkflow
 
     // Assert
-    result.Status |> should equal "Primary"
-    fallbackCalled |> should equal false
+    result.Status =! "Primary"
+    fallbackCalled =! false
 
 [<Test>]
 let ``Timeout fails when step exceeds duration``() =
@@ -138,7 +138,7 @@ let ``Timeout fails when step exceeds duration``() =
 
     // Act & Assert
     (fun () -> Workflow.runSync "test" resilienceWorkflow |> ignore)
-    |> should throw typeof<TimeoutException>
+    |> Assert.Throws<TimeoutException> |> ignore
 
 [<Test>]
 let ``Timeout succeeds when step completes in time``() =
@@ -157,7 +157,7 @@ let ``Timeout succeeds when step completes in time``() =
     let result = Workflow.runSync "test" resilienceWorkflow
 
     // Assert
-    result.Status |> should equal "Done"
+    result.Status =! "Done"
 
 [<Test>]
 let ``Backoff Immediate has no delay between retries``() =
@@ -183,7 +183,7 @@ let ``Backoff Immediate has no delay between retries``() =
     let _ = Workflow.runSync "test" resilienceWorkflow
 
     // Assert: All attempts should happen very quickly
-    attempts |> should equal 3
+    attempts =! 3
 
 [<Test>]
 let ``Resilience modifiers apply to previous step``() =
@@ -213,6 +213,6 @@ let ``Resilience modifiers apply to previous step``() =
     let result = Workflow.runSync "test" resilienceWorkflow
 
     // Assert
-    result |> should equal "test-step1-step2"
-    step1Attempts |> should equal 2  // Failed once, retried
-    step2Attempts |> should equal 1  // No retries needed
+    result =! "test-step1-step2"
+    step1Attempts =! 2  // Failed once, retried
+    step2Attempts =! 1  // No retries needed
