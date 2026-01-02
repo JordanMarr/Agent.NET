@@ -1,78 +1,122 @@
-# AgentNet F# Computation Expression Library Spec
+# AgentNet F# Library Spec
 
 ## Overview
-An F# computation expression library (originally wrapping Microsoft.SemanticKernel, but now pivoted to Microsoft Agent Framework) to provide a clean, idiomatic way to create AI agents. The goal is to create a "killer app" for F# that even C# developers will want to use.
+An F# library wrapping Microsoft Agent Framework to provide a clean, idiomatic way to create AI agents.
 
 ## Design Philosophy
-Inspired by [FSharp.SystemCommandLine](https://github.com/JordanMarr/FSharp.SystemCommandLine):
 - **Tools** → Pipeline style (simple, functional)
-- **Agent** → Computation expression (declarative, readable)
+- **Agents** → Pipeline style (simple, functional)
+- **Workflows** → Computation expression (complex control flow)
 
-## Current API (Prototype)
+## Current API
 
 ### Tool Definition (Pipeline Style)
 ```fsharp
-/// Gets current stock information
 let getStockInfo (symbol: string) : string =
     $"Price for {symbol}: $178.50"
 
 let stockInfoTool =
-    Tool.fromFn getStockInfo
+    Tool.create getStockInfo
     |> Tool.withName "getStockInfo"
     |> Tool.describe "Gets current stock information"
     |> Tool.describeParam "symbol" "The stock ticker symbol"
 ```
 
-### Agent Definition (CE Style)
+### Agent Definition (Pipeline Style)
 ```fsharp
-let stockAdvisor = agent {
-    name "StockAdvisor"
-    instructions "You analyze stocks..."
+let stockAdvisor =
+    Agent.create "You analyze stocks and provide investment advice."
+    |> Agent.withName "StockAdvisor"
+    |> Agent.withTool stockInfoTool
+    |> Agent.withTools [historicalTool; volatilityTool]
+    |> Agent.build chatClient
 
-    add stockInfoTool
-    add historicalTool
-    add volatilityTool
+// Use the agent
+let! response = stockAdvisor.Chat "Compare AAPL vs MSFT"
+```
+
+### Workflow Definition (CE Style)
+```fsharp
+// Sequential workflow
+let researchWorkflow = workflow {
+    start researcher
+    next analyzer
+    next writer
 }
 
-// Build and use
-let agent = stockAdvisor.Build(chatService)
-let! response = agent.Chat "Compare AAPL vs MSFT"
+// Parallel fan-out/fan-in
+let analysisWorkflow = workflow {
+    start loadData
+    fanOut [technicalAnalyst; fundamentalAnalyst; sentimentAnalyst]
+    fanIn summarize
+}
+
+// Conditional routing
+let routingWorkflow = workflow {
+    start classifier
+    route (function
+        | HighConfidence _ -> fastPath
+        | LowConfidence _ -> reviewPath
+        | Inconclusive -> manualReview)
+}
+
+// Resilience
+let resilientWorkflow = workflow {
+    start unreliableStep
+    retry 3
+    timeout (TimeSpan.FromSeconds 30.)
+    fallback fallbackStep
+}
+
+// Run workflows
+let result = Workflow.runSync "input" researchWorkflow
+```
+
+### Result Workflow (Railway-Oriented)
+```fsharp
+let validationWorkflow = resultWorkflow {
+    start (ResultExecutor.bind "Parse" parseDocument)
+    next (ResultExecutor.bind "Validate" validateDocument)
+    next (ResultExecutor.map "Save" saveDocument)
+}
+
+let result = ResultWorkflow.runSync input validationWorkflow
+// Result<Output, Error> with short-circuit on Error
 ```
 
 ## Project Structure
 ```
 src/
-├── AgentNet.sln
 ├── AgentNet/                    # F# library
 │   ├── Tool.fs                  # Tool type + pipeline functions
-│   ├── Agent.fs                 # AgentConfig + agent CE builder
-│   └── SemanticKernel.fs        # SK integration (Tool -> KernelFunction)
-├── StockAdvisorCS/              # C# example (before - verbose)
-└── StockAdvisorFS/              # F# example (after - clean)
+│   ├── Agent.fs                 # AgentConfig, ChatAgent, Agent pipeline
+│   ├── Workflow.fs              # Executor, workflow CE, Workflow module
+│   ├── ResultWorkflow.fs        # ResultExecutor, resultWorkflow CE
+│   └── AgentFramework.fs        # MAF integration (Agent.build)
+├── AgentNet.Tests/              # NUnit tests
+└── StockAdvisorFS/              # F# example
 ```
 
-## Design Decisions Made
-1. **Pipeline for tools, CE for agents** - Follows FSharp.SystemCommandLine pattern
-2. **No attributes** - Tool metadata via pipeline functions, not [<KernelFunction>]
-3. **Pure functions first** - Define F# functions, then wrap with Tool.fromFn
-4. **Single-agent focus** - Get basics right before multi-agent orchestration
-5. **Anthropic.SDK for Claude** - Using unofficial SDK with SK integration
+## Key Types
 
-## TODO / Future Enhancements
-- [ ] Auto-derive tool names via ReflectedDefinition (attempted, needs work)
-- [ ] Extract descriptions from XML doc comments (`///`)
-- [ ] Better handling of multi-parameter curried functions
-- [ ] Streaming response support (IAsyncEnumerable)
-- [ ] Multi-agent group chat support
-- [ ] Error handling and validation
-- [ ] Support for other AI providers (OpenAI, Ollama, Azure)
+| Type | Description |
+|------|-------------|
+| `Tool` | Function with metadata (name, description, params) |
+| `AgentConfig` | Agent configuration (name, instructions, tools) |
+| `ChatAgent` | Built agent with `Chat: string -> Async<string>` |
+| `Executor<'i,'o>` | Workflow step that transforms input to output |
+| `WorkflowDef<'i,'o>` | Composable workflow definition |
+| `ResultExecutor<'i,'o,'e>` | Executor returning `Result<'o,'e>` |
+| `ResultWorkflowDef<'i,'o,'e>` | Workflow with error short-circuiting |
 
-## Open Questions
-- Best way to auto-capture function names without ugly quotation syntax?
-- Should we support both `Tool.fromFn` and a `tool { }` CE for flexibility?
-- How to handle F# async vs C# Task in tool implementations?
+## Design Decisions
+1. **Pipeline for tools and agents** - Simple configuration, functional style
+2. **CE for workflows** - Complex control flow benefits from declarative syntax
+3. **No attributes** - Tool metadata via pipeline functions
+4. **Pure functions first** - Define F# functions, then wrap
+5. **Type-safe workflows** - Input/output types threaded through builder
+6. **Composition via `toExecutor`** - Workflows can be nested
 
 ## Dependencies
-- Microsoft.SemanticKernel 1.68.0
-- Microsoft.SemanticKernel.Agents.Core 1.68.0
-- Anthropic.SDK 5.8.0 (for examples)
+- Microsoft.Agents.AI
+- Microsoft.Extensions.AI
