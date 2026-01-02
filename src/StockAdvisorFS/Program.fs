@@ -13,31 +13,23 @@ let deploymentName = tryGetEnv "AZURE_OPENAI_DEPLOYMENT" |> Option.defaultValue 
 
 let client = AzureOpenAIClient(Uri(endpoint), DefaultAzureCredential())
 let chatClient = client.GetChatClient(deploymentName).AsIChatClient()
-let stockAdvisor = agent chatClient {
-    name "StockAdvisor"
-    instructions """
+let stockAdvisor = 
+    Agent.create """
         You are a helpful stock analysis assistant. You help users analyze stocks,
         compare investments, and understand market metrics.
-
         When a user asks about stocks:
         1. Use the available tools to gather relevant data
         2. Analyze the information
         3. Provide clear, actionable insights
-
         After providing your analysis, also consider broader market context:
         - Market sector trends
         - Economic factors that might affect the stock
         - Risk considerations based on current market conditions
         - A final investment recommendation summary
-
-        Be concise but thorough in your analysis.
-        """
-
-    add stockInfoTool
-    add historicalTool
-    add volatilityTool
-    add compareTool
-}
+        Be concise but thorough in your analysis."""
+    |> Agent.withName "StockAdvisor"
+    |> Agent.withTools [stockInfoTool; historicalTool; volatilityTool; compareTool]
+    |> Agent.build chatClient
 
 printfn "Stock Advisor Agent (F# Edition)"
 printfn "================================="
