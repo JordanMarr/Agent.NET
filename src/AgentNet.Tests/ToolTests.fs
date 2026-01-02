@@ -4,7 +4,7 @@ open NUnit.Framework
 open Swensen.Unquote
 open AgentNet
 
-// Test functions
+// Test functions without XML docs
 let greet (name: string) : string =
     $"Hello, {name}!"
 
@@ -13,6 +13,14 @@ let add (x: int) (y: int) : int =
 
 let formatPrice (symbol: string) (price: decimal) (currency: string) : string =
     $"{symbol}: {price} {currency}"
+
+/// Sends a friendly greeting to the specified person
+let greetWithDocs (name: string) : string =
+    $"Hello, {name}!"
+
+/// Calculates the sum of two integers
+let addWithDocs (x: int) (y: int) : int =
+    x + y
 
 [<Test>]
 let ``Tool.create extracts function name from quotation`` () =
@@ -52,4 +60,19 @@ let ``Tool.describe sets description`` () =
 [<Test>]
 let ``Tool.create sets empty description by default`` () =
     let tool = Tool.create <@ greet @>
+    tool.Description =! ""
+
+[<Test>]
+let ``Tool.createWithDocs extracts description from XML docs`` () =
+    let tool = Tool.createWithDocs <@ greetWithDocs @>
+    tool.Description =! "Sends a friendly greeting to the specified person"
+
+[<Test>]
+let ``Tool.createWithDocs works with curried functions`` () =
+    let tool = Tool.createWithDocs <@ addWithDocs @>
+    tool.Description =! "Calculates the sum of two integers"
+
+[<Test>]
+let ``Tool.createWithDocs falls back to empty when no XML docs`` () =
+    let tool = Tool.createWithDocs <@ greet @>
     tool.Description =! ""

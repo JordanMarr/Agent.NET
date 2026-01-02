@@ -12,9 +12,14 @@ An F# library wrapping Microsoft Agent Framework to provide a clean, idiomatic w
 
 ### Tool Definition (Quotation-Based)
 ```fsharp
+/// Gets current stock information including price and metrics
 let getStockInfo (symbol: string) : string =
     $"Price for {symbol}: $178.50"
 
+// Option 1: Auto-extract description from XML docs (recommended)
+let stockInfoTool = Tool.createWithDocs <@ getStockInfo @>
+
+// Option 2: Manual description
 let stockInfoTool =
     Tool.create <@ getStockInfo @>
     |> Tool.describe "Gets current stock information"
@@ -23,6 +28,7 @@ let stockInfoTool =
 The quotation `<@ getStockInfo @>` automatically extracts:
 - Function name → Tool name
 - Parameter names and types → Tool parameters (via MethodInfo)
+- XML doc summary → Tool description (with `createWithDocs`)
 
 ### Agent Definition (Pipeline Style)
 ```fsharp
@@ -113,12 +119,13 @@ src/
 
 ## Design Decisions
 1. **Quotations for tools** - Automatic name/param extraction, no sync issues
-2. **Pipeline for agents** - Simple configuration, functional style
-3. **CE for workflows** - Complex control flow benefits from declarative syntax
-4. **No attributes** - Metadata extracted from quotations
-5. **Pure functions first** - Define F# functions, then wrap with quotation
-6. **Type-safe workflows** - Input/output types threaded through builder
-7. **Composition via `toExecutor`** - Workflows can be nested
+2. **XML docs for descriptions** - `createWithDocs` extracts from `///` comments
+3. **Pipeline for agents** - Simple configuration, functional style
+4. **CE for workflows** - Complex control flow benefits from declarative syntax
+5. **No attributes** - Metadata extracted from quotations and XML docs
+6. **Pure functions first** - Define F# functions, then wrap with quotation
+7. **Type-safe workflows** - Input/output types threaded through builder
+8. **Composition via `toExecutor`** - Workflows can be nested
 
 ## Dependencies
 - Microsoft.Agents.AI

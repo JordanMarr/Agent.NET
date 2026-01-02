@@ -87,21 +87,10 @@ let compareStocks (symbol1: string) (symbol2: string) : string =
 
 
 // ============================================================================
-// TOOL REGISTRATION - Quotation-based! Name and params extracted automatically
+// TOOL REGISTRATION - Descriptions extracted from XML docs automatically!
 // ============================================================================
 
-let stockInfoTool =
-    Tool.create <@ getStockInfo @>
-    |> Tool.describe "Gets current stock information including price, change, and basic metrics"
-
-let historicalTool =
-    Tool.create <@ getHistoricalPrices @>
-    |> Tool.describe "Gets historical price data for a stock"
-
-let volatilityTool =
-    Tool.create <@ calculateVolatility @>
-    |> Tool.describe "Calculates volatility metrics for a stock"
-
-let compareTool =
-    Tool.create <@ compareStocks @>
-    |> Tool.describe "Compares fundamental metrics between two stocks"
+let stockInfoTool = Tool.createWithDocs <@ getStockInfo @>
+let historicalTool = Tool.createWithDocs <@ getHistoricalPrices @>
+let volatilityTool = Tool.createWithDocs <@ calculateVolatility @>
+let compareTool = Tool.createWithDocs <@ compareStocks @>
