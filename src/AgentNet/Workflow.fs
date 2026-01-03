@@ -55,6 +55,13 @@ module Executor =
             Execute = fun input _ -> fn input
         }
 
+    /// Creates an executor from a Task function
+    let fromTask (name: string) (fn: 'input -> System.Threading.Tasks.Task<'output>) : Executor<'input, 'output> =
+        {
+            Name = name
+            Execute = fun input _ -> Async.AwaitTask (fn input)
+        }
+
     /// Creates an executor from a function that takes context
     let create (name: string) (fn: 'input -> WorkflowContext -> Async<'output>) : Executor<'input, 'output> =
         {
