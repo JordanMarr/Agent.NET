@@ -77,6 +77,22 @@ module Executor =
             Execute = fun input _ -> agent.Chat input
         }
 
+    /// Creates a typed executor from a ChatAgent with input/output transformation
+    let fromAgentWith
+        (name: string)
+        (format: 'input -> string)
+        (parse: 'input -> string -> 'output)
+        (agent: ChatAgent)
+        : Executor<'input, 'output> =
+        {
+            Name = name
+            Execute = fun input _ -> task {
+                let prompt = format input
+                let! response = agent.Chat prompt
+                return parse input response
+            }
+        }
+
 
 /// Backoff strategy for retries
 type BackoffStrategy =
