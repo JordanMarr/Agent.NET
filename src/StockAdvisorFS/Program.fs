@@ -1,4 +1,5 @@
 open System
+open System.Threading.Tasks
 open AgentNet
 open Azure.AI.OpenAI
 open Azure.Identity
@@ -43,7 +44,7 @@ printfn "Stock Advisor Agent (F# Edition)"
 printfn "================================="
 printfn "Ask me about stocks! (Type 'exit' to quit)\n"
 
-let rec loop () = async {
+let rec loop () = task {
     printf "You: "
     let input = Console.ReadLine()
 
@@ -58,5 +59,5 @@ let rec loop () = async {
         return! loop ()
 }
 
-loop () |> Async.RunSynchronously
+loop () |> Task.WaitAll
 printfn "Goodbye!"

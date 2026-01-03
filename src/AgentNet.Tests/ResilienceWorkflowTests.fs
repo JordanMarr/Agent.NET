@@ -3,6 +3,7 @@
 module AgentNet.Tests.ResilienceWorkflowTests
 
 open System
+open System.Threading.Tasks
 open NUnit.Framework
 open Swensen.Unquote
 open AgentNet
@@ -15,7 +16,7 @@ let ``Retry executes step multiple times on failure then succeeds``() =
     // Arrange: Create an executor that fails twice then succeeds
     let mutable attempts = 0
 
-    let flaky = Executor.create "Flaky" (fun (input: string) _ -> async {
+    let flaky = Executor.create "Flaky" (fun (input: string) _ -> task {
         attempts <- attempts + 1
         if attempts < 3 then
             failwith "Transient failure"
@@ -39,7 +40,7 @@ let ``Retry stops immediately on success``() =
     // Arrange
     let mutable attempts = 0
 
-    let reliable = Executor.create "Reliable" (fun (input: string) _ -> async {
+    let reliable = Executor.create "Reliable" (fun (input: string) _ -> task {
         attempts <- attempts + 1
         return { Id = input; Status = "Success"; Attempts = attempts }
     })
@@ -58,7 +59,7 @@ let ``Retry stops immediately on success``() =
 [<Test>]
 let ``Retry with zero retries fails immediately``() =
     // Arrange
-    let alwaysFails = Executor.create "AlwaysFails" (fun (_: string) _ -> async {
+    let alwaysFails = Executor.create "AlwaysFails" (fun (_: string) _ -> task {
         return failwith "Always fails"
     })
 
@@ -76,7 +77,7 @@ let ``Fallback executes when all retries exhausted``() =
     // Arrange
     let mutable primaryAttempts = 0
 
-    let unreliable = Executor.create "Unreliable" (fun (input: string) _ -> async {
+    let unreliable = Executor.create "Unreliable" (fun (input: string) _ -> task {
         primaryAttempts <- primaryAttempts + 1
         return failwith "Always fails"
     })
@@ -105,7 +106,7 @@ let ``Fallback not used when primary succeeds``() =
     let reliable = Executor.fromFn "Reliable" (fun (input: string) ->
         { Id = input; Status = "Primary"; Attempts = 1 })
 
-    let fallbackExecutor = Executor.create "Fallback" (fun (input: string) _ -> async {
+    let fallbackExecutor = Executor.create "Fallback" (fun (input: string) _ -> task {
         fallbackCalled <- true
         return { Id = input; Status = "Fallback"; Attempts = 0 }
     })
@@ -126,8 +127,8 @@ let ``Fallback not used when primary succeeds``() =
 [<Test>]
 let ``Timeout fails when step exceeds duration``() =
     // Arrange
-    let slow = Executor.create "Slow" (fun (input: string) _ -> async {
-        do! Async.Sleep 500  // Takes 500ms
+    let slow = Executor.create "Slow" (fun (input: string) _ -> task {
+        do! Task.Delay 500  // Takes 500ms
         return { Id = input; Status = "Done"; Attempts = 1 }
     })
 
@@ -143,8 +144,8 @@ let ``Timeout fails when step exceeds duration``() =
 [<Test>]
 let ``Timeout succeeds when step completes in time``() =
     // Arrange
-    let fast = Executor.create "Fast" (fun (input: string) _ -> async {
-        do! Async.Sleep 50  // Takes 50ms
+    let fast = Executor.create "Fast" (fun (input: string) _ -> task {
+        do! Task.Delay 50  // Takes 50ms
         return { Id = input; Status = "Done"; Attempts = 1 }
     })
 
@@ -165,7 +166,7 @@ let ``Backoff Immediate has no delay between retries``() =
     let mutable attempts = 0
     let mutable timestamps: DateTime list = []
 
-    let flaky = Executor.create "Flaky" (fun (input: string) _ -> async {
+    let flaky = Executor.create "Flaky" (fun (input: string) _ -> task {
         attempts <- attempts + 1
         timestamps <- DateTime.Now :: timestamps
         if attempts < 3 then
@@ -191,14 +192,14 @@ let ``Resilience modifiers apply to previous step``() =
     let mutable step1Attempts = 0
     let mutable step2Attempts = 0
 
-    let flakyStep1 = Executor.create "FlakyStep1" (fun (input: string) _ -> async {
+    let flakyStep1 = Executor.create "FlakyStep1" (fun (input: string) _ -> task {
         step1Attempts <- step1Attempts + 1
         if step1Attempts < 2 then
             failwith "Fail once"
         return input + "-step1"
     })
 
-    let step2 = Executor.create "Step2" (fun (input: string) _ -> async {
+    let step2 = Executor.create "Step2" (fun (input: string) _ -> task {
         step2Attempts <- step2Attempts + 1
         return input + "-step2"
     })

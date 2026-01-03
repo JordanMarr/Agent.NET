@@ -2,6 +2,7 @@
 /// Based on the result workflow examples from docs/WorkflowDSL-Design.md
 module AgentNet.Tests.ResultWorkflowTests
 
+open System.Threading.Tasks
 open NUnit.Framework
 open Swensen.Unquote
 open AgentNet
@@ -127,15 +128,15 @@ let ``ResultExecutor.bind passes Result through unchanged``() =
     | _ -> Assert.Fail "Expected ParseError"
 
 [<Test>]
-let ``ResultExecutor.mapAsync wraps async result in Ok``() =
+let ``ResultExecutor.mapTask wraps task result in Ok``() =
     // Arrange
-    let asyncFetcher = ResultExecutor.mapAsync "AsyncFetcher" (fun (id: string) -> async {
-        do! Async.Sleep 10  // Simulate async work
+    let taskFetcher = ResultExecutor.mapTask "TaskFetcher" (fun (id: string) -> task {
+        do! Task.Delay 10  // Simulate async work
         return { Id = id; Content = $"Content for {id}" }
     })
 
     let resultWf = resultWorkflow {
-        start asyncFetcher
+        start taskFetcher
     }
 
     // Act
@@ -150,18 +151,18 @@ let ``ResultExecutor.mapAsync wraps async result in Ok``() =
         Assert.Fail "Expected Ok result"
 
 [<Test>]
-let ``ResultExecutor.bindAsync passes async Result through``() =
+let ``ResultExecutor.bindTask passes task Result through``() =
     // Arrange
-    let asyncValidator = ResultExecutor.bindAsync "AsyncValidator" (fun (doc: Document) -> async {
-        do! Async.Sleep 10
+    let taskValidator = ResultExecutor.bindTask "TaskValidator" (fun (doc: Document) -> task {
+        do! Task.Delay 10
         if doc.Content.Length > 5 then
             return Ok { Doc = doc; IsValid = true; Errors = [] }
         else
             return Error (ValidationError ("content", "Content too short"))
     })
 
-    let longDocWf = resultWorkflow { start asyncValidator }
-    let shortDocWf = resultWorkflow { start asyncValidator }
+    let longDocWf = resultWorkflow { start taskValidator }
+    let shortDocWf = resultWorkflow { start taskValidator }
 
     // Act & Assert: Long content passes
     let longResult = ResultWorkflow.runSync { Id = "1"; Content = "This is long enough" } longDocWf

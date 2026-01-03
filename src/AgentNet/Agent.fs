@@ -1,6 +1,7 @@
 namespace AgentNet
 
 open System
+open System.Threading.Tasks
 
 /// Configuration for an agent
 type AgentConfig = {
@@ -12,7 +13,7 @@ type AgentConfig = {
 /// Represents an AI agent that can chat and use tools
 type ChatAgent = {
     Config: AgentConfig
-    Chat: string -> Async<string>
+    Chat: string -> Task<string>
 }
 
 /// Pipeline functions for creating agents

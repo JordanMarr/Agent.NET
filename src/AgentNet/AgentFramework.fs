@@ -42,8 +42,8 @@ module MAF =
 
         {
             Config = config
-            Chat = fun message -> async {
-                let! response = mafAgent.RunAsync(message, thread) |> Async.AwaitTask
+            Chat = fun message -> task {
+                let! response = mafAgent.RunAsync(message, thread)
                 return response.Text
             }
         }

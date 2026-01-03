@@ -1,6 +1,7 @@
 namespace AgentNet
 
 open System
+open System.Threading.Tasks
 
 // =============================================================================
 // Internal Result Helpers (no external dependencies)
@@ -11,14 +12,14 @@ module internal ResultHelpers =
     let bind f = function Ok x -> f x | Error e -> Error e
     let mapError f = function Ok x -> Ok x | Error e -> Error (f e)
 
-module internal AsyncResultHelpers =
-    let map f ar = async {
-        let! r = ar
+module internal TaskResultHelpers =
+    let map f tr = task {
+        let! r = tr
         return ResultHelpers.map f r
     }
 
-    let bind f ar = async {
-        let! r = ar
+    let bind f tr = task {
+        let! r = tr
         match r with
         | Ok x -> return! f x
         | Error e -> return Error e
@@ -32,7 +33,7 @@ module internal AsyncResultHelpers =
 /// An executor that transforms input to Result<output, error> within a workflow
 type ResultExecutor<'input, 'output, 'error> = {
     Name: string
-    Execute: 'input -> WorkflowContext -> Async<Result<'output, 'error>>
+    Execute: 'input -> WorkflowContext -> Task<Result<'output, 'error>>
 }
 
 
@@ -48,35 +49,52 @@ module ResultExecutor =
     let map (name: string) (fn: 'input -> 'output) : ResultExecutor<'input, 'output, 'error> =
         {
             Name = name
-            Execute = fun input _ -> async { return Ok (fn input) }
+            Execute = fun input _ -> task { return Ok (fn input) }
         }
 
     /// Creates a result executor from a Result-returning function (bind semantics)
     let bind (name: string) (fn: 'input -> Result<'output, 'error>) : ResultExecutor<'input, 'output, 'error> =
         {
             Name = name
-            Execute = fun input _ -> async { return fn input }
+            Execute = fun input _ -> task { return fn input }
         }
 
-    /// Creates a result executor from an async function (map semantics - wrapped in Ok)
-    let mapAsync (name: string) (fn: 'input -> Async<'output>) : ResultExecutor<'input, 'output, 'error> =
+    /// Creates a result executor from a Task function (map semantics - wrapped in Ok)
+    let mapTask (name: string) (fn: 'input -> Task<'output>) : ResultExecutor<'input, 'output, 'error> =
         {
             Name = name
-            Execute = fun input _ -> async {
+            Execute = fun input _ -> task {
                 let! result = fn input
                 return Ok result
             }
         }
 
-    /// Creates a result executor from an async Result-returning function (bind semantics)
-    let bindAsync (name: string) (fn: 'input -> Async<Result<'output, 'error>>) : ResultExecutor<'input, 'output, 'error> =
+    /// Creates a result executor from a Task Result-returning function (bind semantics)
+    let bindTask (name: string) (fn: 'input -> Task<Result<'output, 'error>>) : ResultExecutor<'input, 'output, 'error> =
         {
             Name = name
             Execute = fun input _ -> fn input
         }
 
+    /// Creates a result executor from an F# Async function (map semantics - wrapped in Ok)
+    let mapAsync (name: string) (fn: 'input -> Async<'output>) : ResultExecutor<'input, 'output, 'error> =
+        {
+            Name = name
+            Execute = fun input _ -> task {
+                let! result = fn input |> Async.StartAsTask
+                return Ok result
+            }
+        }
+
+    /// Creates a result executor from an F# Async Result-returning function (bind semantics)
+    let bindAsync (name: string) (fn: 'input -> Async<Result<'output, 'error>>) : ResultExecutor<'input, 'output, 'error> =
+        {
+            Name = name
+            Execute = fun input _ -> fn input |> Async.StartAsTask
+        }
+
     /// Creates a result executor with full context access
-    let create (name: string) (fn: 'input -> WorkflowContext -> Async<Result<'output, 'error>>) : ResultExecutor<'input, 'output, 'error> =
+    let create (name: string) (fn: 'input -> WorkflowContext -> Task<Result<'output, 'error>>) : ResultExecutor<'input, 'output, 'error> =
         {
             Name = name
             Execute = fn
@@ -86,7 +104,7 @@ module ResultExecutor =
     let fromAgent (name: string) (agent: ChatAgent) : ResultExecutor<string, string, 'error> =
         {
             Name = name
-            Execute = fun input _ -> async {
+            Execute = fun input _ -> task {
                 let! result = agent.Chat input
                 return Ok result
             }
@@ -96,7 +114,7 @@ module ResultExecutor =
     let fromWorkflow (name: string) (workflow: WorkflowDef<'input, 'output>) : ResultExecutor<'input, 'output, 'error> =
         {
             Name = name
-            Execute = fun input ctx -> async {
+            Execute = fun input ctx -> task {
                 let! result = Workflow.runWithContext input ctx workflow
                 return Ok result
             }
@@ -109,9 +127,9 @@ module ResultExecutor =
 
 /// A step in a result workflow pipeline
 type ResultWorkflowStep<'error> =
-    | Step of name: string * execute: (obj -> WorkflowContext -> Async<Result<obj, 'error>>)
-    | Route of router: (obj -> WorkflowContext -> Async<Result<obj, 'error>>)
-    | Parallel of executors: (obj -> WorkflowContext -> Async<Result<obj, 'error>>) list
+    | Step of name: string * execute: (obj -> WorkflowContext -> Task<Result<obj, 'error>>)
+    | Route of router: (obj -> WorkflowContext -> Task<Result<obj, 'error>>)
+    | Parallel of executors: (obj -> WorkflowContext -> Task<Result<obj, 'error>>) list
     | Resilient of settings: ResilienceSettings * inner: ResultWorkflowStep<'error>
 
 
@@ -136,7 +154,7 @@ module internal ResultWorkflowInternal =
 
     /// Wraps a typed result executor as an untyped step
     let wrapExecutor<'i, 'o, 'e> (exec: ResultExecutor<'i, 'o, 'e>) : ResultWorkflowStep<'e> =
-        Step (exec.Name, fun input ctx -> async {
+        Step (exec.Name, fun input ctx -> task {
             let typedInput = input :?> 'i
             let! result = exec.Execute typedInput ctx
             return ResultHelpers.map box result
@@ -144,7 +162,7 @@ module internal ResultWorkflowInternal =
 
     /// Wraps a typed router function as an untyped route step
     let wrapRouter<'a, 'b, 'e> (router: 'a -> ResultExecutor<'a, 'b, 'e>) : ResultWorkflowStep<'e> =
-        Route (fun input ctx -> async {
+        Route (fun input ctx -> task {
             let typedInput = input :?> 'a
             let selectedExecutor = router typedInput
             let! result = selectedExecutor.Execute typedInput ctx
@@ -157,7 +175,7 @@ module internal ResultWorkflowInternal =
         let wrappedFns =
             executors
             |> List.map (fun exec ->
-                fun (input: obj) (ctx: WorkflowContext) -> async {
+                fun (input: obj) (ctx: WorkflowContext) -> task {
                     let typedInput = input :?> 'i
                     let! result = exec.Execute typedInput ctx
                     return ResultHelpers.map box result
@@ -166,7 +184,7 @@ module internal ResultWorkflowInternal =
 
     /// Wraps an aggregator executor, handling the obj list -> typed list conversion
     let wrapFanIn<'elem, 'o, 'e> (exec: ResultExecutor<'elem list, 'o, 'e>) : ResultWorkflowStep<'e> =
-        Step (exec.Name, fun input ctx -> async {
+        Step (exec.Name, fun input ctx -> task {
             // Input is obj list from parallel, convert each element to the expected type
             let objList = input :?> obj list
             let typedList = objList |> List.map (fun o -> o :?> 'elem)
@@ -244,7 +262,7 @@ type ResultWorkflowBuilder() =
     /// The fallback executor must have matching output type
     [<CustomOperation("fallback")>]
     member _.Fallback(state: ResultWorkflowState<'input, 'output, 'e>, executor: ResultExecutor<'middle, 'output, 'e>) : ResultWorkflowState<'input, 'output, 'e> =
-        let fallbackFn (input: obj) (ctx: WorkflowContext) : Async<obj> = async {
+        let fallbackFn (input: obj) (ctx: WorkflowContext) : Task<obj> = task {
             let typedInput = unbox<'middle> input
             let! result = executor.Execute typedInput ctx
             // Fallback must succeed (it's the last resort), so we extract the Ok value
@@ -283,16 +301,23 @@ module ResultWorkflow =
             let factor = Math.Pow(multiplier, float (attempt - 1))
             TimeSpan.FromMilliseconds(initial.TotalMilliseconds * factor)
 
-    /// Executes an async operation with timeout
-    let private withTimeout (timeout: TimeSpan) (operation: Async<'a>) : Async<'a> =
-        async {
-            let! child = Async.StartChild(operation, int timeout.TotalMilliseconds)
-            return! child
+    /// Executes a task operation with timeout
+    let private withTimeout (timeout: TimeSpan) (operation: Task<'a>) : Task<'a> =
+        task {
+            use cts = new System.Threading.CancellationTokenSource()
+            let timeoutTask = Task.Delay(timeout, cts.Token)
+            let! completed = Task.WhenAny(operation, timeoutTask)
+
+            if Object.ReferenceEquals(completed, timeoutTask) then
+                return raise (TimeoutException("Operation timed out"))
+            else
+                cts.Cancel()
+                return! operation
         }
 
     /// Executes an inner step (non-resilient)
-    let rec private executeInnerStep<'e> (step: ResultWorkflowStep<'e>) (input: obj) (ctx: WorkflowContext) : Async<Result<obj, 'e>> =
-        async {
+    let rec private executeInnerStep<'e> (step: ResultWorkflowStep<'e>) (input: obj) (ctx: WorkflowContext) : Task<Result<obj, 'e>> =
+        task {
             match step with
             | Step (_, execute) ->
                 return! execute input ctx
@@ -304,7 +329,7 @@ module ResultWorkflow =
                 let! results =
                     executors
                     |> List.map (fun exec -> exec input ctx)
-                    |> Async.Parallel
+                    |> Task.WhenAll
 
                 // Check for any errors, return first error if found
                 let firstError =
@@ -325,9 +350,9 @@ module ResultWorkflow =
         }
 
     /// Executes a step with resilience (retry, timeout, fallback)
-    and private executeWithResilience<'e> (settings: ResilienceSettings) (inner: ResultWorkflowStep<'e>) (input: obj) (ctx: WorkflowContext) : Async<Result<obj, 'e>> =
-        let rec attemptWithRetry (remainingRetries: int) (attempt: int) : Async<Result<obj, 'e>> =
-            async {
+    and private executeWithResilience<'e> (settings: ResilienceSettings) (inner: ResultWorkflowStep<'e>) (input: obj) (ctx: WorkflowContext) : Task<Result<obj, 'e>> =
+        let rec attemptWithRetry (remainingRetries: int) (attempt: int) : Task<Result<obj, 'e>> =
+            task {
                 try
                     // Apply timeout if specified
                     let operation = executeInnerStep inner input ctx
@@ -346,7 +371,7 @@ module ResultWorkflow =
                         // Calculate and apply backoff delay
                         let delay = calculateDelay settings.Backoff attempt
                         if delay > TimeSpan.Zero then
-                            do! Async.Sleep (int delay.TotalMilliseconds)
+                            do! Task.Delay (int delay.TotalMilliseconds)
 
                         // Retry
                         return! attemptWithRetry (remainingRetries - 1) (attempt + 1)
@@ -363,9 +388,9 @@ module ResultWorkflow =
         attemptWithRetry settings.RetryCount 1
 
     /// Runs a result workflow with the given input and context
-    let runWithContext<'input, 'output, 'error> (input: 'input) (ctx: WorkflowContext) (workflow: ResultWorkflowDef<'input, 'output, 'error>) : Async<Result<'output, 'error>> =
-        let rec executeSteps (steps: ResultWorkflowStep<'error> list) (current: obj) : Async<Result<obj, 'error>> =
-            async {
+    let runWithContext<'input, 'output, 'error> (input: 'input) (ctx: WorkflowContext) (workflow: ResultWorkflowDef<'input, 'output, 'error>) : Task<Result<'output, 'error>> =
+        let rec executeSteps (steps: ResultWorkflowStep<'error> list) (current: obj) : Task<Result<obj, 'error>> =
+            task {
                 match steps with
                 | [] ->
                     return Ok current
@@ -378,19 +403,19 @@ module ResultWorkflow =
                         return Error e  // Short-circuit on error!
             }
 
-        async {
+        task {
             let! result = executeSteps workflow.Steps (input :> obj)
             return ResultHelpers.map unbox<'output> result
         }
 
     /// Runs a result workflow with the given input (creates a new context)
-    let run<'input, 'output, 'error> (input: 'input) (workflow: ResultWorkflowDef<'input, 'output, 'error>) : Async<Result<'output, 'error>> =
+    let run<'input, 'output, 'error> (input: 'input) (workflow: ResultWorkflowDef<'input, 'output, 'error>) : Task<Result<'output, 'error>> =
         let ctx = WorkflowContext.create ()
         runWithContext input ctx workflow
 
     /// Runs a result workflow synchronously
     let runSync<'input, 'output, 'error> (input: 'input) (workflow: ResultWorkflowDef<'input, 'output, 'error>) : Result<'output, 'error> =
-        workflow |> run input |> Async.RunSynchronously
+        (workflow |> run input).GetAwaiter().GetResult()
 
     /// Converts a result workflow to a result executor (enables workflow composition)
     let toExecutor<'input, 'output, 'error> (name: string) (workflow: ResultWorkflowDef<'input, 'output, 'error>) : ResultExecutor<'input, 'output, 'error> =

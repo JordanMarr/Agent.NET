@@ -1,6 +1,7 @@
 namespace AgentNet
 
 open System
+open System.Threading.Tasks
 
 /// Context passed to executors during workflow execution
 type WorkflowContext = {
@@ -34,7 +35,7 @@ module WorkflowContext =
 /// An executor that transforms input to output within a workflow
 type Executor<'input, 'output> = {
     Name: string
-    Execute: 'input -> WorkflowContext -> Async<'output>
+    Execute: 'input -> WorkflowContext -> Task<'output>
 }
 
 /// Module for creating executors
@@ -45,25 +46,25 @@ module Executor =
     let fromFn (name: string) (fn: 'input -> 'output) : Executor<'input, 'output> =
         {
             Name = name
-            Execute = fun input _ -> async { return fn input }
+            Execute = fun input _ -> task { return fn input }
         }
 
-    /// Creates an executor from an async function
-    let fromAsync (name: string) (fn: 'input -> Async<'output>) : Executor<'input, 'output> =
+    /// Creates an executor from a Task function (C#-friendly)
+    let fromTask (name: string) (fn: 'input -> Task<'output>) : Executor<'input, 'output> =
         {
             Name = name
             Execute = fun input _ -> fn input
         }
 
-    /// Creates an executor from a Task function
-    let fromTask (name: string) (fn: 'input -> System.Threading.Tasks.Task<'output>) : Executor<'input, 'output> =
+    /// Creates an executor from an F# Async function
+    let fromAsync (name: string) (fn: 'input -> Async<'output>) : Executor<'input, 'output> =
         {
             Name = name
-            Execute = fun input _ -> Async.AwaitTask (fn input)
+            Execute = fun input _ -> fn input |> Async.StartAsTask
         }
 
     /// Creates an executor from a function that takes context
-    let create (name: string) (fn: 'input -> WorkflowContext -> Async<'output>) : Executor<'input, 'output> =
+    let create (name: string) (fn: 'input -> WorkflowContext -> Task<'output>) : Executor<'input, 'output> =
         {
             Name = name
             Execute = fn
@@ -88,7 +89,7 @@ type ResilienceSettings = {
     RetryCount: int
     Backoff: BackoffStrategy
     Timeout: TimeSpan option
-    Fallback: (obj -> WorkflowContext -> Async<obj>) option
+    Fallback: (obj -> WorkflowContext -> Task<obj>) option
 }
 
 module ResilienceSettings =
@@ -101,9 +102,9 @@ module ResilienceSettings =
 
 /// A step in a workflow pipeline
 type WorkflowStep =
-    | Step of name: string * execute: (obj -> WorkflowContext -> Async<obj>)
-    | Route of router: (obj -> WorkflowContext -> Async<obj>)
-    | Parallel of executors: (obj -> WorkflowContext -> Async<obj>) list
+    | Step of name: string * execute: (obj -> WorkflowContext -> Task<obj>)
+    | Route of router: (obj -> WorkflowContext -> Task<obj>)
+    | Parallel of executors: (obj -> WorkflowContext -> Task<obj>) list
     | Resilient of settings: ResilienceSettings * inner: WorkflowStep
 
 
@@ -124,7 +125,7 @@ module internal WorkflowInternal =
 
     /// Wraps a typed executor as an untyped step
     let wrapExecutor<'i, 'o> (exec: Executor<'i, 'o>) : WorkflowStep =
-        Step (exec.Name, fun input ctx -> async {
+        Step (exec.Name, fun input ctx -> task {
             let typedInput = input :?> 'i
             let! result = exec.Execute typedInput ctx
             return result :> obj
@@ -133,7 +134,7 @@ module internal WorkflowInternal =
     /// Wraps a typed router function as an untyped route step
     /// The router takes input and returns an executor to run on that same input
     let wrapRouter<'a, 'b> (router: 'a -> Executor<'a, 'b>) : WorkflowStep =
-        Route (fun input ctx -> async {
+        Route (fun input ctx -> task {
             let typedInput = input :?> 'a
             let selectedExecutor = router typedInput
             let! result = selectedExecutor.Execute typedInput ctx
@@ -145,7 +146,7 @@ module internal WorkflowInternal =
         let wrappedFns =
             executors
             |> List.map (fun exec ->
-                fun (input: obj) (ctx: WorkflowContext) -> async {
+                fun (input: obj) (ctx: WorkflowContext) -> task {
                     let typedInput = input :?> 'i
                     let! result = exec.Execute typedInput ctx
                     return result :> obj
@@ -154,7 +155,7 @@ module internal WorkflowInternal =
 
     /// Wraps an aggregator executor, handling the obj list → typed list conversion
     let wrapFanIn<'elem, 'o> (exec: Executor<'elem list, 'o>) : WorkflowStep =
-        Step (exec.Name, fun input ctx -> async {
+        Step (exec.Name, fun input ctx -> task {
             // Input is obj list from parallel, convert each element to the expected type
             let objList = input :?> obj list
             let typedList = objList |> List.map (fun o -> o :?> 'elem)
@@ -231,7 +232,7 @@ type WorkflowBuilder() =
     /// The fallback executor must have matching input/output types
     [<CustomOperation("fallback")>]
     member _.Fallback(state: WorkflowState<'input, 'output>, executor: Executor<'middle, 'output>) : WorkflowState<'input, 'output> =
-        let fallbackFn (input: obj) (ctx: WorkflowContext) : Async<obj> = async {
+        let fallbackFn (input: obj) (ctx: WorkflowContext) : Task<obj> = task {
             let typedInput = unbox<'middle> input
             let! result = executor.Execute typedInput ctx
             return box result
@@ -262,16 +263,23 @@ module Workflow =
             let factor = Math.Pow(multiplier, float (attempt - 1))
             TimeSpan.FromMilliseconds(initial.TotalMilliseconds * factor)
 
-    /// Executes an async operation with timeout
-    let private withTimeout (timeout: TimeSpan) (operation: Async<'a>) : Async<'a> =
-        async {
-            let! child = Async.StartChild(operation, int timeout.TotalMilliseconds)
-            return! child
+    /// Executes a task operation with timeout
+    let private withTimeout (timeout: TimeSpan) (operation: Task<'a>) : Task<'a> =
+        task {
+            use cts = new System.Threading.CancellationTokenSource()
+            let timeoutTask = Task.Delay(timeout, cts.Token)
+            let! completed = Task.WhenAny(operation, timeoutTask)
+
+            if Object.ReferenceEquals(completed, timeoutTask) then
+                return raise (TimeoutException("Operation timed out"))
+            else
+                cts.Cancel()
+                return! operation
         }
 
     /// Executes an inner step (non-resilient)
-    let rec private executeInnerStep (step: WorkflowStep) (input: obj) (ctx: WorkflowContext) : Async<obj> =
-        async {
+    let rec private executeInnerStep (step: WorkflowStep) (input: obj) (ctx: WorkflowContext) : Task<obj> =
+        task {
             match step with
             | Step (_, execute) ->
                 return! execute input ctx
@@ -281,16 +289,16 @@ module Workflow =
                 let! results =
                     executors
                     |> List.map (fun exec -> exec input ctx)
-                    |> Async.Parallel
+                    |> Task.WhenAll
                 return (results |> Array.toList) :> obj
             | Resilient (settings, inner) ->
                 return! executeWithResilience settings inner input ctx
         }
 
     /// Executes a step with resilience (retry, timeout, fallback)
-    and private executeWithResilience (settings: ResilienceSettings) (inner: WorkflowStep) (input: obj) (ctx: WorkflowContext) : Async<obj> =
-        let rec attemptWithRetry (remainingRetries: int) (attempt: int) : Async<obj> =
-            async {
+    and private executeWithResilience (settings: ResilienceSettings) (inner: WorkflowStep) (input: obj) (ctx: WorkflowContext) : Task<obj> =
+        let rec attemptWithRetry (remainingRetries: int) (attempt: int) : Task<obj> =
+            task {
                 try
                     // Apply timeout if specified
                     let operation = executeInnerStep inner input ctx
@@ -305,7 +313,7 @@ module Workflow =
                         // Calculate and apply backoff delay
                         let delay = calculateDelay settings.Backoff attempt
                         if delay > TimeSpan.Zero then
-                            do! Async.Sleep (int delay.TotalMilliseconds)
+                            do! Task.Delay (int delay.TotalMilliseconds)
 
                         // Retry
                         return! attemptWithRetry (remainingRetries - 1) (attempt + 1)
@@ -321,8 +329,8 @@ module Workflow =
         attemptWithRetry settings.RetryCount 1
 
     /// Runs a workflow with the given input and context
-    let runWithContext<'input, 'output> (input: 'input) (ctx: WorkflowContext) (workflow: WorkflowDef<'input, 'output>) : Async<'output> =
-        async {
+    let runWithContext<'input, 'output> (input: 'input) (ctx: WorkflowContext) (workflow: WorkflowDef<'input, 'output>) : Task<'output> =
+        task {
             let mutable current: obj = input :> obj
 
             for step in workflow.Steps do
@@ -333,13 +341,13 @@ module Workflow =
         }
 
     /// Runs a workflow with the given input (creates a new context)
-    let run<'input, 'output> (input: 'input) (workflow: WorkflowDef<'input, 'output>) : Async<'output> =
+    let run<'input, 'output> (input: 'input) (workflow: WorkflowDef<'input, 'output>) : Task<'output> =
         let ctx = WorkflowContext.create ()
         runWithContext input ctx workflow
 
     /// Runs a workflow synchronously
     let runSync<'input, 'output> (input: 'input) (workflow: WorkflowDef<'input, 'output>) : 'output =
-        workflow |> run input |> Async.RunSynchronously
+        (workflow |> run input).GetAwaiter().GetResult()
 
     /// Converts a workflow to an executor (enables workflow composition)
     let toExecutor<'input, 'output> (name: string) (workflow: WorkflowDef<'input, 'output>) : Executor<'input, 'output> =
