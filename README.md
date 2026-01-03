@@ -1,6 +1,6 @@
 # Agent.NET
 
-**A beautiful F# library for building AI agents on .NET**
+**Elegant agent workflows for .NET, designed in F#.**
 
 [![NuGet](https://img.shields.io/nuget/v/Agent.NET.svg)](https://www.nuget.org/packages/Agent.NET)
 [![License](https://img.shields.io/github/license/JordanMarr/Agent.NET)](LICENSE)
@@ -11,11 +11,21 @@
 
 What if building AI agents looked like this?
 
+```csharp
+// Your existing C# service
+public class StockService 
+{ 
+    public static string GetQuote(string symbol) => ...
+}
+```
+
+Wrapped elegantly in F#:
+
 ```fsharp
 /// <summary>Gets current stock information</summary>
 /// <param name="symbol">The stock ticker symbol (e.g., AAPL)</param>
-let getStockInfo (symbol: string) : string =
-    StockService.GetQuote(symbol)  // Your existing C# service works here
+let getStockInfo (symbol: string) =
+    StockService.GetQuote(symbol)  // Call your existing service
 
 let tool = Tool.createWithDocs <@ getStockInfo @>
 
@@ -58,7 +68,7 @@ dotnet add package Agent.NET
 Write normal F# functions with XML documentation (summary only or summary and params):
 
 ```fsharp
-open Agent.NET
+open AgentNet
 
 /// Gets the current weather for a city
 let getWeather (city: string) : string =
@@ -73,7 +83,7 @@ let getTime (timezone: string) : string =
 
 // Create tools - metadata extracted automatically!
 let weatherTool = Tool.createWithDocs <@ getWeather @>
-let timeTool = Tool.createWithDocs <@ getTime @>
+let timeTool =    Tool.createWithDocs <@ getTime @>
 ```
 
 ### 2. Create an Agent
