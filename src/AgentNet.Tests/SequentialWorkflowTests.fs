@@ -54,7 +54,7 @@ let ``Simple sequential workflow executes in order``() =
     result.Analysis.Research.Sources.Length =! 2
     result.Analysis.Research.Topic.Keywords =! ["functional"; "async"]
 
-/// Integration test: validates agent CE -> Build -> Executor.fromAgent -> workflow path
+/// Integration test: validates agent CE -> Build -> Executor.fromChatAgent -> workflow path
 [<Test>]
 let ``Agent executors integrate with workflow DSL``() =
     // Arrange: Create a stub chat client with distinct, non-overlapping patterns
@@ -65,20 +65,20 @@ let ``Agent executors integrate with workflow DSL``() =
     stubClient.SetResponse("ANALYSIS_RESULT:", "FINAL_REPORT: Conclusion reached.")
 
     // Create agent executors using the stub client
-    let researcher = 
-        Agent.create "You are a researcher. Research the given topic."
-        |> Agent.build stubClient
-        |> Executor.fromAgent "Researcher"
+    let researcher =
+        ChatAgent.create "You are a researcher. Research the given topic."
+        |> ChatAgent.build stubClient
+        |> Executor.fromChatAgent "Researcher"
 
-    let analyzer = 
-        Agent.create "You are an analyzer. Analyze the given research."
-        |> Agent.build stubClient
-        |> Executor.fromAgent "Analyzer"
+    let analyzer =
+        ChatAgent.create "You are an analyzer. Analyze the given research."
+        |> ChatAgent.build stubClient
+        |> Executor.fromChatAgent "Analyzer"
 
-    let writer = 
-        Agent.create "You are a writer. Write a report from the analysis."
-        |> Agent.build stubClient
-        |> Executor.fromAgent "Writer"
+    let writer =
+        ChatAgent.create "You are a writer. Write a report from the analysis."
+        |> ChatAgent.build stubClient
+        |> Executor.fromChatAgent "Writer"
 
     // Build the workflow using the DSL
     let myWorkflow = workflow {

@@ -21,8 +21,8 @@ module MAF =
         // The explicit annotation ensures correct overload resolution
         AIFunctionFactory.Create(method = tool.MethodInfo, target = null, options = options)
 
-    /// Creates a ChatClientAgent from an AgentNet Agent config
-    let createAgent (chatClient: IChatClient) (config: AgentConfig) : AIAgent =
+    /// Creates a ChatClientAgent from an AgentNet ChatAgent config
+    let createAgent (chatClient: IChatClient) (config: ChatAgentConfig) : AIAgent =
         // Convert tools to AIFunctions and cast to AITool
         let tools =
             config.Tools
@@ -38,7 +38,7 @@ module MAF =
             tools = tools) :> AIAgent
 
     /// Builds a fully functional ChatAgent from config and chat client
-    let build (chatClient: IChatClient) (config: AgentConfig) : ChatAgent =
+    let build (chatClient: IChatClient) (config: ChatAgentConfig) : ChatAgent =
         let mafAgent = createAgent chatClient config
         let thread = mafAgent.GetNewThread()
 
@@ -50,11 +50,11 @@ module MAF =
             }
         }
 
-/// Extends Agent type with the build function (requires MAF)
+/// Extends ChatAgent type with the build function (requires MAF)
 [<AutoOpen>]
-module AgentExtensions =
+module ChatAgentExtensions =
 
-    type Agent with
+    type ChatAgent with
         /// Builds an agent from config using the specified chat client
-        static member build (chatClient: IChatClient) (config: AgentConfig) : ChatAgent =
+        static member build (chatClient: IChatClient) (config: ChatAgentConfig) : ChatAgent =
             MAF.build chatClient config

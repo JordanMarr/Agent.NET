@@ -70,27 +70,18 @@ module Executor =
             Execute = fn
         }
 
-    /// Creates an executor from an AgentNet ChatAgent
-    let fromAgent (name: string) (agent: ChatAgent) : Executor<string, string> =
+    /// Creates an untyped executor from a ChatAgent (string -> string)
+    let fromChatAgent (name: string) (agent: ChatAgent) : Executor<string, string> =
         {
             Name = name
             Execute = fun input _ -> agent.Chat input
         }
 
-    /// Creates a typed executor from a ChatAgent with input/output transformation
-    let fromAgentWith
-        (name: string)
-        (format: 'input -> string)
-        (parse: 'input -> string -> 'output)
-        (agent: ChatAgent)
-        : Executor<'input, 'output> =
+    /// Creates a typed executor from a TypedAgent
+    let fromTypedAgent (name: string) (agent: TypedAgent<'input, 'output>) : Executor<'input, 'output> =
         {
             Name = name
-            Execute = fun input _ -> task {
-                let prompt = format input
-                let! response = agent.Chat prompt
-                return parse input response
-            }
+            Execute = fun input _ -> TypedAgent.invoke input agent
         }
 
 

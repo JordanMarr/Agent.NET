@@ -1,10 +1,9 @@
 namespace AgentNet
 
-open System
 open System.Threading.Tasks
 
-/// Configuration for an agent
-type AgentConfig = {
+/// Configuration for a chat agent
+type ChatAgentConfig = {
     Name: string option
     Instructions: string
     Tools: ToolDef list
@@ -12,25 +11,25 @@ type AgentConfig = {
 
 /// Represents an AI agent that can chat and use tools
 type ChatAgent = {
-    Config: AgentConfig
+    Config: ChatAgentConfig
     Chat: string -> Task<string>
 }
 
-/// Pipeline functions for creating agents
-type Agent =
+/// Pipeline functions for creating chat agents
+type ChatAgent with
 
     /// Creates an agent config with the given instructions
-    static member create (instructions: string) : AgentConfig =
+    static member create (instructions: string) : ChatAgentConfig =
         { Name = None; Instructions = instructions; Tools = [] }
 
     /// Sets the agent's name
-    static member withName (name: string) (config: AgentConfig) : AgentConfig =
+    static member withName (name: string) (config: ChatAgentConfig) : ChatAgentConfig =
         { config with Name = Some name }
 
     /// Adds a single tool to the agent
-    static member withTool (tool: ToolDef) (config: AgentConfig) : AgentConfig =
+    static member withTool (tool: ToolDef) (config: ChatAgentConfig) : ChatAgentConfig =
         { config with Tools = config.Tools @ [tool] }
 
     /// Adds a list of tools to the agent
-    static member withTools (tools: ToolDef list) (config: AgentConfig) : AgentConfig =
+    static member withTools (tools: ToolDef list) (config: ChatAgentConfig) : ChatAgentConfig =
         { config with Tools = config.Tools @ tools }

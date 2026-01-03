@@ -29,7 +29,7 @@ let private createStockAdvisor (chatClient: IChatClient) =
     let volatilityTool = Tool.createWithDocs <@ StockTools.calculateVolatility @>
     let compareTool =    Tool.createWithDocs <@ StockTools.compareStocks @>
 
-    Agent.create """
+    ChatAgent.create """
         You are a helpful stock analysis assistant. You help users analyze stocks,
         compare investments, and understand market metrics.
         When a user asks about stocks:
@@ -42,9 +42,9 @@ let private createStockAdvisor (chatClient: IChatClient) =
         - Risk considerations based on current market conditions
         - A final investment recommendation summary
         Be concise but thorough in your analysis."""
-    |> Agent.withName "StockAdvisor"
-    |> Agent.withTools [stockInfoTool; historicalTool; volatilityTool; compareTool]
-    |> Agent.build chatClient
+    |> ChatAgent.withName "StockAdvisor"
+    |> ChatAgent.withTools [stockInfoTool; historicalTool; volatilityTool; compareTool]
+    |> ChatAgent.build chatClient
 
 let private chatLoop (agent: ChatAgent) = task {
     printfn "\nAgent Chat Mode - Type 'back' to return to menu\n"

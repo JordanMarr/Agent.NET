@@ -101,7 +101,7 @@ module ResultExecutor =
         }
 
     /// Creates a result executor from an AgentNet ChatAgent (map semantics - agents don't return Result)
-    let fromAgent (name: string) (agent: ChatAgent) : ResultExecutor<string, string, 'error> =
+    let fromChatAgent (name: string) (agent: ChatAgent) : ResultExecutor<string, string, 'error> =
         {
             Name = name
             Execute = fun input _ -> task {

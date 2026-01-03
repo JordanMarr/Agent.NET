@@ -26,7 +26,7 @@ let private createChatClient () =
     client.AsIChatClient(model)
 
 let private createAnalysisAgent (chatClient: IChatClient) =
-    Agent.create """
+    ChatAgent.create """
         You are a stock comparison analyst. Given information about two stocks,
         provide a concise comparison highlighting:
         - Which stock appears stronger and why
@@ -35,8 +35,8 @@ let private createAnalysisAgent (chatClient: IChatClient) =
         - A brief recommendation
         Keep your response focused and under 200 words.
         """
-    |> Agent.withName "StockAnalyst"
-    |> Agent.build chatClient
+    |> ChatAgent.withName "StockAnalyst"
+    |> ChatAgent.build chatClient
 
 // ----------------------------------------------------------------------------
 // Domain Types
@@ -67,10 +67,9 @@ let private fetchBothStocks (symbols: StockSymbols) : Task<StockPair> = task {
     return { Stock1 = results.[0]; Stock2 = results.[1] }
 }
 
-/// Creates an executor that uses the AI agent to compare stocks
-let private createCompareExecutor (agent: ChatAgent) =
-    let formatPrompt (pair: StockPair) =
-        $"""Compare these two stocks:
+/// Formats a StockPair into a prompt for the AI agent
+let private formatStockPair (pair: StockPair) =
+    $"""Compare these two stocks:
 
 {pair.Stock1.Symbol}:
 {pair.Stock1.Info}
@@ -80,10 +79,13 @@ Volatility: {pair.Stock1.Volatility}
 {pair.Stock2.Info}
 Volatility: {pair.Stock2.Volatility}"""
 
-    let parseResponse pair response =
-        { Pair = pair; Analysis = response }
+/// Parses the AI response into an AnalysisResult
+let private parseAnalysisResult (pair: StockPair) (response: string) =
+    { Pair = pair; Analysis = response }
 
-    Executor.fromAgentWith "CompareStocks" formatPrompt parseResponse agent
+/// Creates a typed agent for stock comparison
+let private createTypedAnalysisAgent (agent: ChatAgent) =
+    TypedAgent.create formatStockPair parseAnalysisResult agent
 
 /// Generates a formatted report
 let private generateReport (result: AnalysisResult) : string =
@@ -112,9 +114,9 @@ let private generateReport (result: AnalysisResult) : string =
 // ----------------------------------------------------------------------------
 
 /// Multi-stock comparison workflow using the AgentNet workflow DSL
-let private stockComparisonWorkflow (agent: ChatAgent) = workflow {
+let private stockComparisonWorkflow typedAgent = workflow {
     start (Executor.fromTask "FetchBothStocks" fetchBothStocks)
-    next (createCompareExecutor agent)
+    next (Executor.fromTypedAgent "CompareStocks" typedAgent)
     next (Executor.fromFn "GenerateReport" generateReport)
 }
 
@@ -128,8 +130,9 @@ let run (symbol1: string) (symbol2: string) : Task<unit> = task {
     printfn "Initializing AI agent..."
 
     let chatClient = createChatClient ()
-    let agent = createAnalysisAgent chatClient
-    let wf = stockComparisonWorkflow agent
+    let chatAgent = createAnalysisAgent chatClient
+    let typedAgent = createTypedAnalysisAgent chatAgent
+    let wf = stockComparisonWorkflow typedAgent
 
     printfn "Step 1: Fetching stock data in parallel..."
     printfn "Step 2: AI agent analyzing stocks..."
