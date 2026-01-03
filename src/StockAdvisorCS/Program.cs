@@ -4,6 +4,9 @@ using StockAdvisorCS;
 // STOCK ADVISOR - MAIN MENU
 // ============================================================================
 
+// Load .env from current dir or any parent directory
+DotNetEnv.Env.TraversePath().Load();
+
 Console.WriteLine("Stock Advisor Agent (C# Edition)");
 Console.WriteLine("================================");
 
@@ -61,7 +64,7 @@ void ShowMenu()
     Console.WriteLine();
     Console.WriteLine("Stock Advisor - Demo Scenarios");
     Console.WriteLine("==============================");
-    Console.WriteLine("1. Agent Chat (interactive - requires Azure OpenAI)");
+    Console.WriteLine("1. Agent Chat (interactive - requires Claude API)");
     Console.WriteLine("2. Workflow: Compare AAPL vs MSFT");
     Console.WriteLine("3. Workflow: Compare GOOGL vs AMZN");
     Console.WriteLine("4. Single Stock Analysis (TSLA)");

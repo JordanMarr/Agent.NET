@@ -1,5 +1,4 @@
-using Azure.AI.OpenAI;
-using Azure.Identity;
+using Anthropic;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 
@@ -8,25 +7,21 @@ namespace StockAdvisorCS;
 // ============================================================================
 // AGENT CHAT SAMPLE
 // Demonstrates creating an AI agent with tools and interactive chat.
+// Uses Claude via the Anthropic API.
 // ============================================================================
 
 public static class AgentChatSample
 {
     private static AIAgent? _cachedAgent;
 
-    private static IChatClient? TryCreateChatClient()
+    private static IChatClient CreateChatClient()
     {
-        var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT");
-        if (string.IsNullOrEmpty(endpoint))
-            return null;
+        var apiKey = Environment.GetEnvironmentVariable("ANTHROPIC_API_KEY")
+            ?? throw new InvalidOperationException("ANTHROPIC_API_KEY environment variable is not set.");
+        var model = Environment.GetEnvironmentVariable("ANTHROPIC_MODEL") ?? "claude-sonnet-4-20250514";
 
-        var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT") ?? "gpt-4o";
-
-        var azureClient = new AzureOpenAIClient(
-            new Uri(endpoint),
-            new DefaultAzureCredential());
-
-        return azureClient.GetChatClient(deploymentName).AsIChatClient();
+        var client = new AnthropicClient { APIKey = apiKey };
+        return client.AsIChatClient(model);
     }
 
     private static AIAgent CreateStockAdvisor(IChatClient chatClient)
@@ -90,15 +85,18 @@ public static class AgentChatSample
     {
         if (_cachedAgent == null)
         {
-            Console.WriteLine("\nInitializing agent (requires Azure OpenAI)...");
-            var chatClient = TryCreateChatClient();
-            if (chatClient == null)
+            Console.WriteLine("\nInitializing agent (requires Anthropic API key)...");
+            try
             {
-                Console.WriteLine("Error: AZURE_OPENAI_ENDPOINT environment variable is not set.");
-                Console.WriteLine("Agent chat requires Azure OpenAI configuration.");
+                var chatClient = CreateChatClient();
+                _cachedAgent = CreateStockAdvisor(chatClient);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error: {ex.Message}");
+                Console.WriteLine("Agent chat requires ANTHROPIC_API_KEY environment variable.");
                 return;
             }
-            _cachedAgent = CreateStockAdvisor(chatClient);
         }
 
         await ChatLoopAsync(_cachedAgent);

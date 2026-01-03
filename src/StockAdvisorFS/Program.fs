@@ -1,5 +1,6 @@
 open System
 open AgentNet
+open DotNetEnv
 
 // ============================================================================
 // STOCK ADVISOR - MAIN MENU
@@ -9,7 +10,7 @@ let showMenu () =
     printfn ""
     printfn "Stock Advisor - Demo Scenarios"
     printfn "=============================="
-    printfn "1. Agent Chat (interactive - requires Azure OpenAI)"
+    printfn "1. Agent Chat (interactive - requires Claude API)"
     printfn "2. Workflow: Compare AAPL vs MSFT"
     printfn "3. Workflow: Compare GOOGL vs AMZN"
     printfn "4. Single Stock Analysis (TSLA)"
@@ -61,6 +62,9 @@ let rec mainLoop (agentOpt: ChatAgent option) = task {
 // ============================================================================
 // ENTRY POINT
 // ============================================================================
+
+// Load .env from current dir or any parent directory
+Env.TraversePath().Load() |> ignore
 
 printfn "Stock Advisor Agent (F# Edition)"
 printfn "================================="

@@ -61,3 +61,8 @@ nunit-*.xml
 
 # Claude Code
 .claude/
+
+# Environment files (API keys, secrets)
+.env
+.env.*
+*.env

@@ -3,23 +3,24 @@ module StockAdvisorFS.AgentChatSample
 open System
 open System.Threading.Tasks
 open AgentNet
-open Azure.AI.OpenAI
-open Azure.Identity
+open Anthropic
 open Microsoft.Extensions.AI
 
 // ============================================================================
 // AGENT CHAT SAMPLE
 // Demonstrates creating an AI agent with tools and interactive chat.
+// Uses Claude via the Anthropic API.
 // ============================================================================
 
 let private failIfNone msg opt = opt |> Option.defaultWith (fun () -> failwith msg)
 let private tryGetEnv = Environment.GetEnvironmentVariable >> Option.ofObj
 
 let private createChatClient () =
-    let endpoint = tryGetEnv "AZURE_OPENAI_ENDPOINT" |> failIfNone "AZURE_OPENAI_ENDPOINT environment variable is not set."
-    let deploymentName = tryGetEnv "AZURE_OPENAI_DEPLOYMENT" |> Option.defaultValue "gpt-4o"
-    let client = AzureOpenAIClient(Uri(endpoint), DefaultAzureCredential())
-    client.GetChatClient(deploymentName).AsIChatClient()
+    let apiKey = tryGetEnv "ANTHROPIC_API_KEY" |> failIfNone "ANTHROPIC_API_KEY environment variable is not set."
+    let model = tryGetEnv "ANTHROPIC_MODEL" |> Option.defaultValue "claude-sonnet-4-20250514"
+
+    let client = AnthropicClient(APIKey = apiKey)
+    client.AsIChatClient(model)
 
 let private createStockAdvisor (chatClient: IChatClient) =
     // Create tools using XML doc comments for descriptions
@@ -73,7 +74,7 @@ let run (existingAgent: ChatAgent option) : Task<ChatAgent option> = task {
         do! chatLoop agent
         return Some agent
     | None ->
-        printfn "\nInitializing agent (requires Azure OpenAI)..."
+        printfn "\nInitializing agent (requires Anthropic API key)..."
         try
             let chatClient = createChatClient ()
             let agent = createStockAdvisor chatClient
@@ -81,6 +82,6 @@ let run (existingAgent: ChatAgent option) : Task<ChatAgent option> = task {
             return Some agent
         with ex ->
             printfn $"\nError: {ex.Message}"
-            printfn "Agent chat requires AZURE_OPENAI_ENDPOINT environment variable."
+            printfn "Agent chat requires ANTHROPIC_API_KEY environment variable."
             return None
 }
