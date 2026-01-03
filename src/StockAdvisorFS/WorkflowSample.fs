@@ -85,7 +85,7 @@ let private parseAnalysisResult (pair: StockPair) (response: string) =
 
 /// Creates a typed agent for stock comparison
 let private createTypedAnalysisAgent (agent: ChatAgent) =
-    TypedAgent.create formatStockPair parseAnalysisResult agent
+    TypedAgent.create formatStockPair parseAnalysisResult agent    
 
 /// Generates a formatted report
 let private generateReport (result: AnalysisResult) : string =
