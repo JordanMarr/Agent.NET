@@ -70,13 +70,6 @@ module Executor =
             Execute = fn
         }
 
-    /// Creates an untyped executor from a ChatAgent (string -> string)
-    let fromChatAgent (name: string) (agent: ChatAgent) : Executor<string, string> =
-        {
-            Name = name
-            Execute = fun input _ -> agent.Chat input
-        }
-
     /// Creates a typed executor from a TypedAgent
     let fromTypedAgent (name: string) (agent: TypedAgent<'input, 'output>) : Executor<'input, 'output> =
         {

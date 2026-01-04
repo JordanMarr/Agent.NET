@@ -16,32 +16,35 @@ type FinalReport = { Analysis: AnalysisResult; Title: string; Summary: string }
 [<Test>]
 let ``Simple sequential workflow executes in order``() =
     // Arrange: Create executors with custom domain types
-    let researcher = Executor.fromFn "Researcher" (fun (topic: Topic) ->
+    let researcher (topic: Topic) =
         {
             Topic = topic
             Sources = ["Source A"; "Source B"]
             RawFindings = $"Findings about {topic.Name}"
-        })
+        }
+        |> toTask
 
-    let analyzer = Executor.fromFn "Analyzer" (fun (research: ResearchData) ->
+    let analyzer (research: ResearchData) = 
         {
             Research = research
             Insights = [$"Insight from {research.Sources.Length} sources"]
             Confidence = 0.85
-        })
+        }
+        |> toTask
 
-    let writer = Executor.fromFn "Writer" (fun (analysis: AnalysisResult) ->
+    let writer (analysis: AnalysisResult) =
         {
             Analysis = analysis
             Title = $"Report: {analysis.Research.Topic.Name}"
             Summary = $"Based on {analysis.Insights.Length} insights with {analysis.Confidence} confidence"
-        })
+        }
+        |> toTask
 
     // Build the workflow using the DSL
     let myWorkflow = workflow {
-        start researcher
-        next analyzer
-        next writer
+        start "Researcher" researcher
+        next "Analyzer" analyzer
+        next "Writer" writer
     }
 
     // Act: Run the workflow
@@ -54,7 +57,7 @@ let ``Simple sequential workflow executes in order``() =
     result.Analysis.Research.Sources.Length =! 2
     result.Analysis.Research.Topic.Keywords =! ["functional"; "async"]
 
-/// Integration test: validates agent CE -> Build -> Executor.fromChatAgent -> workflow path
+/// Integration test: validates agent CE -> Build -> TypedAgent.create -> workflow path
 [<Test>]
 let ``Agent executors integrate with workflow DSL``() =
     // Arrange: Create a stub chat client with distinct, non-overlapping patterns
@@ -68,17 +71,17 @@ let ``Agent executors integrate with workflow DSL``() =
     let researcher =
         ChatAgent.create "You are a researcher. Research the given topic."
         |> ChatAgent.build stubClient
-        |> Executor.fromChatAgent "Researcher"
+        |> TypedAgent.create id (fun _ response -> response)
 
     let analyzer =
         ChatAgent.create "You are an analyzer. Analyze the given research."
         |> ChatAgent.build stubClient
-        |> Executor.fromChatAgent "Analyzer"
+        |> TypedAgent.create id (fun _ response -> response)
 
     let writer =
         ChatAgent.create "You are a writer. Write a report from the analysis."
         |> ChatAgent.build stubClient
-        |> Executor.fromChatAgent "Writer"
+        |> TypedAgent.create id (fun _ response -> response)
 
     // Build the workflow using the DSL
     let myWorkflow = workflow {
