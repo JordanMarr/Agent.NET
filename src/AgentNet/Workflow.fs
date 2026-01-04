@@ -454,10 +454,14 @@ module WorkflowCE =
     /// Example: fanOut [+fn1; +fn2; +fn3; +fn4; +fn5; +fn6]
     let inline (~+) (x: ^T) : Step<'i, 'o> = step x
 
-    /// Prefix operator for sync functions. Wraps ('i -> 'o) as SyncStep.
+    /// Wraps a sync function ('i -> 'o) as SyncStep.
     /// Use this to explicitly mark synchronous functions in workflows.
+    /// Example: workflow { start (sync parseFn); next (sync transformFn) }
+    let inline sync (fn: 'i -> 'o) : Step<'i, 'o> = SyncStep fn
+
+    /// Prefix operator shorthand for 'sync'. Wraps ('i -> 'o) as SyncStep.
     /// Example: workflow { start %parseFn; next %transformFn }
-    let inline (~%) (fn: 'i -> 'o) : Step<'i, 'o> = SyncStep fn
+    let inline (~%) (fn: 'i -> 'o) : Step<'i, 'o> = sync fn
 
 
 /// Functions for executing workflows
