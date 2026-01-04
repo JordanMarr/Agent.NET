@@ -36,8 +36,8 @@ let ``FanOut executes all executors and FanIn aggregates results``() =
 
     let parallelWorkflow = workflow {
         start loadData
-        fanOut [ s technicalAnalyst; s fundamentalAnalyst; s sentimentAnalyst ]
-        fanIn (summarize)
+        fanOut technicalAnalyst fundamentalAnalyst sentimentAnalyst
+        fanIn summarize
     }
 
     // Act
@@ -61,7 +61,7 @@ let ``FanOut with two executors``() =
 
     let parallelWorkflow = workflow {
         start prepare
-        fanOut [ s addTen; s multiplyThree ]
+        fanOut addTen multiplyThree
         fanIn combine
     }
 
@@ -85,7 +85,7 @@ let ``FanOut preserves order of results``() =
 
     let parallelWorkflow = workflow {
         start identity
-        fanOut [ s tag0; s tag1; s tag2 ]
+        fanOut tag0 tag1 tag2
         fanIn join
     }
 
@@ -109,7 +109,7 @@ let ``FanOut followed by additional processing``() =
 
     let parallelWorkflow = workflow {
         start init
-        fanOut [ s double; s triple ]
+        fanOut double triple
         fanIn sum
         next format
     }
@@ -136,7 +136,7 @@ let ``FanOut with custom record types``() =
 
     let parallelWorkflow = workflow {
         start createPackets
-        fanOut [ s processA; s processB ]
+        fanOut processA processB
         fanIn merge
     }
 
@@ -145,3 +145,29 @@ let ``FanOut with custom record types``() =
 
     // Assert
     result =! "DATA-A|DATA-B"
+
+[<Test>]
+let ``FanOut with list syntax and + operator for 6+ branches``() =
+    // Arrange: 6 branches requires list syntax with step/+ operator
+    let init = Executor.fromFn "Init" (fun (x: int) -> x)
+
+    let add1 = Executor.fromFn "Add1" (fun (x: int) -> x + 1)
+    let add2 = Executor.fromFn "Add2" (fun (x: int) -> x + 2)
+    let add3 = Executor.fromFn "Add3" (fun (x: int) -> x + 3)
+    let add4 = Executor.fromFn "Add4" (fun (x: int) -> x + 4)
+    let add5 = Executor.fromFn "Add5" (fun (x: int) -> x + 5)
+    let add6 = Executor.fromFn "Add6" (fun (x: int) -> x + 6)
+
+    let sum = Executor.fromFn "Sum" (fun (nums: int list) -> List.sum nums)
+
+    let parallelWorkflow = workflow {
+        start init
+        fanOut [+add1; +add2; +add3; +add4; +add5; +add6]
+        fanIn sum
+    }
+
+    // Act: 10 -> fanOut: [11, 12, 13, 14, 15, 16] -> sum: 81
+    let result = Workflow.runSync 10 parallelWorkflow
+
+    // Assert
+    result =! 81

@@ -174,6 +174,19 @@ module WorkflowInternal =
                 })
         Parallel wrappedFns
 
+    /// Wraps a list of Steps as parallel execution with a name prefix
+    let wrapStepParallelNamed<'i, 'o> (namePrefix: string) (steps: Step<'i, 'o> list) : WorkflowStep =
+        let wrappedFns =
+            steps
+            |> List.mapi (fun i step ->
+                let exec = stepToExecutor $"{namePrefix} {i+1}" step
+                fun (input: obj) (ctx: WorkflowContext) -> task {
+                    let typedInput = input :?> 'i
+                    let! result = exec.Execute typedInput ctx
+                    return result :> obj
+                })
+        Parallel wrappedFns
+
     /// Wraps a Step as a fan-in aggregator, handling obj list → typed list conversion
     let wrapStepFanIn<'elem, 'o> (name: string) (step: Step<'elem list, 'o>) : WorkflowStep =
         let exec = stepToExecutor name step
@@ -295,13 +308,83 @@ type WorkflowBuilder() =
         { Steps = state.Steps @ [WorkflowInternal.wrapRouter router]; StepCount = state.StepCount + 1 }
 
     // ============ FANOUT OPERATIONS ============
-    // Takes a list of Step values - supports mixed types (Task, Async, Agent, Executor)!
-    // Use the 's' helper to convert: fanOut [s taskFn; s asyncFn; s agent]
+    // SRTP overloads for 2-5 arguments - no wrapper needed!
+    // For 6+ branches, use: fanOut [s fn1; s fn2; ...]
 
-    /// Runs multiple steps in parallel (fan-out) - supports mixed types via Step list
+    /// Runs 2 steps in parallel (fan-out) - SRTP resolves each argument type
+    [<CustomOperation("fanOut")>]
+    member inline _.FanOut(state: WorkflowState<'input, 'middle>, x1: ^A, x2: ^B) : WorkflowState<'input, 'o list> =
+        let s1 : Step<'middle, 'o> = ((^A or StepConv) : (static member ToStep: StepConv * ^A -> Step<'middle, 'o>) (StepConv, x1))
+        let s2 : Step<'middle, 'o> = ((^B or StepConv) : (static member ToStep: StepConv * ^B -> Step<'middle, 'o>) (StepConv, x2))
+        { Steps = state.Steps @ [WorkflowInternal.wrapStepParallel [s1; s2]]; StepCount = state.StepCount + 1 }
+
+    /// Runs 3 steps in parallel (fan-out) - SRTP resolves each argument type
+    [<CustomOperation("fanOut")>]
+    member inline _.FanOut(state: WorkflowState<'input, 'middle>, x1: ^A, x2: ^B, x3: ^C) : WorkflowState<'input, 'o list> =
+        let s1 : Step<'middle, 'o> = ((^A or StepConv) : (static member ToStep: StepConv * ^A -> Step<'middle, 'o>) (StepConv, x1))
+        let s2 : Step<'middle, 'o> = ((^B or StepConv) : (static member ToStep: StepConv * ^B -> Step<'middle, 'o>) (StepConv, x2))
+        let s3 : Step<'middle, 'o> = ((^C or StepConv) : (static member ToStep: StepConv * ^C -> Step<'middle, 'o>) (StepConv, x3))
+        { Steps = state.Steps @ [WorkflowInternal.wrapStepParallel [s1; s2; s3]]; StepCount = state.StepCount + 1 }
+
+    /// Runs 4 steps in parallel (fan-out) - SRTP resolves each argument type
+    [<CustomOperation("fanOut")>]
+    member inline _.FanOut(state: WorkflowState<'input, 'middle>, x1: ^A, x2: ^B, x3: ^C, x4: ^D) : WorkflowState<'input, 'o list> =
+        let s1 : Step<'middle, 'o> = ((^A or StepConv) : (static member ToStep: StepConv * ^A -> Step<'middle, 'o>) (StepConv, x1))
+        let s2 : Step<'middle, 'o> = ((^B or StepConv) : (static member ToStep: StepConv * ^B -> Step<'middle, 'o>) (StepConv, x2))
+        let s3 : Step<'middle, 'o> = ((^C or StepConv) : (static member ToStep: StepConv * ^C -> Step<'middle, 'o>) (StepConv, x3))
+        let s4 : Step<'middle, 'o> = ((^D or StepConv) : (static member ToStep: StepConv * ^D -> Step<'middle, 'o>) (StepConv, x4))
+        { Steps = state.Steps @ [WorkflowInternal.wrapStepParallel [s1; s2; s3; s4]]; StepCount = state.StepCount + 1 }
+
+    /// Runs 5 steps in parallel (fan-out) - SRTP resolves each argument type
+    [<CustomOperation("fanOut")>]
+    member inline _.FanOut(state: WorkflowState<'input, 'middle>, x1: ^A, x2: ^B, x3: ^C, x4: ^D, x5: ^E) : WorkflowState<'input, 'o list> =
+        let s1 : Step<'middle, 'o> = ((^A or StepConv) : (static member ToStep: StepConv * ^A -> Step<'middle, 'o>) (StepConv, x1))
+        let s2 : Step<'middle, 'o> = ((^B or StepConv) : (static member ToStep: StepConv * ^B -> Step<'middle, 'o>) (StepConv, x2))
+        let s3 : Step<'middle, 'o> = ((^C or StepConv) : (static member ToStep: StepConv * ^C -> Step<'middle, 'o>) (StepConv, x3))
+        let s4 : Step<'middle, 'o> = ((^D or StepConv) : (static member ToStep: StepConv * ^D -> Step<'middle, 'o>) (StepConv, x4))
+        let s5 : Step<'middle, 'o> = ((^E or StepConv) : (static member ToStep: StepConv * ^E -> Step<'middle, 'o>) (StepConv, x5))
+        { Steps = state.Steps @ [WorkflowInternal.wrapStepParallel [s1; s2; s3; s4; s5]]; StepCount = state.StepCount + 1 }
+
+    /// Runs multiple steps in parallel (fan-out) - for 6+ branches, use 's' helper
     [<CustomOperation("fanOut")>]
     member _.FanOut(state: WorkflowState<'input, 'middle>, steps: Step<'middle, 'o> list) : WorkflowState<'input, 'o list> =
         { Steps = state.Steps @ [WorkflowInternal.wrapStepParallel steps]; StepCount = state.StepCount + 1 }
+
+    // Named fanOut overloads - name is used as prefix for parallel step names
+
+    /// Runs 2 named steps in parallel (fan-out)
+    [<CustomOperation("fanOut")>]
+    member inline _.FanOut(state: WorkflowState<'input, 'middle>, name: string, x1: ^A, x2: ^B) : WorkflowState<'input, 'o list> =
+        let s1 : Step<'middle, 'o> = ((^A or StepConv) : (static member ToStep: StepConv * ^A -> Step<'middle, 'o>) (StepConv, x1))
+        let s2 : Step<'middle, 'o> = ((^B or StepConv) : (static member ToStep: StepConv * ^B -> Step<'middle, 'o>) (StepConv, x2))
+        { Steps = state.Steps @ [WorkflowInternal.wrapStepParallelNamed name [s1; s2]]; StepCount = state.StepCount + 1 }
+
+    /// Runs 3 named steps in parallel (fan-out)
+    [<CustomOperation("fanOut")>]
+    member inline _.FanOut(state: WorkflowState<'input, 'middle>, name: string, x1: ^A, x2: ^B, x3: ^C) : WorkflowState<'input, 'o list> =
+        let s1 : Step<'middle, 'o> = ((^A or StepConv) : (static member ToStep: StepConv * ^A -> Step<'middle, 'o>) (StepConv, x1))
+        let s2 : Step<'middle, 'o> = ((^B or StepConv) : (static member ToStep: StepConv * ^B -> Step<'middle, 'o>) (StepConv, x2))
+        let s3 : Step<'middle, 'o> = ((^C or StepConv) : (static member ToStep: StepConv * ^C -> Step<'middle, 'o>) (StepConv, x3))
+        { Steps = state.Steps @ [WorkflowInternal.wrapStepParallelNamed name [s1; s2; s3]]; StepCount = state.StepCount + 1 }
+
+    /// Runs 4 named steps in parallel (fan-out)
+    [<CustomOperation("fanOut")>]
+    member inline _.FanOut(state: WorkflowState<'input, 'middle>, name: string, x1: ^A, x2: ^B, x3: ^C, x4: ^D) : WorkflowState<'input, 'o list> =
+        let s1 : Step<'middle, 'o> = ((^A or StepConv) : (static member ToStep: StepConv * ^A -> Step<'middle, 'o>) (StepConv, x1))
+        let s2 : Step<'middle, 'o> = ((^B or StepConv) : (static member ToStep: StepConv * ^B -> Step<'middle, 'o>) (StepConv, x2))
+        let s3 : Step<'middle, 'o> = ((^C or StepConv) : (static member ToStep: StepConv * ^C -> Step<'middle, 'o>) (StepConv, x3))
+        let s4 : Step<'middle, 'o> = ((^D or StepConv) : (static member ToStep: StepConv * ^D -> Step<'middle, 'o>) (StepConv, x4))
+        { Steps = state.Steps @ [WorkflowInternal.wrapStepParallelNamed name [s1; s2; s3; s4]]; StepCount = state.StepCount + 1 }
+
+    /// Runs 5 named steps in parallel (fan-out)
+    [<CustomOperation("fanOut")>]
+    member inline _.FanOut(state: WorkflowState<'input, 'middle>, name: string, x1: ^A, x2: ^B, x3: ^C, x4: ^D, x5: ^E) : WorkflowState<'input, 'o list> =
+        let s1 : Step<'middle, 'o> = ((^A or StepConv) : (static member ToStep: StepConv * ^A -> Step<'middle, 'o>) (StepConv, x1))
+        let s2 : Step<'middle, 'o> = ((^B or StepConv) : (static member ToStep: StepConv * ^B -> Step<'middle, 'o>) (StepConv, x2))
+        let s3 : Step<'middle, 'o> = ((^C or StepConv) : (static member ToStep: StepConv * ^C -> Step<'middle, 'o>) (StepConv, x3))
+        let s4 : Step<'middle, 'o> = ((^D or StepConv) : (static member ToStep: StepConv * ^D -> Step<'middle, 'o>) (StepConv, x4))
+        let s5 : Step<'middle, 'o> = ((^E or StepConv) : (static member ToStep: StepConv * ^E -> Step<'middle, 'o>) (StepConv, x5))
+        { Steps = state.Steps @ [WorkflowInternal.wrapStepParallelNamed name [s1; s2; s3; s4; s5]]; StepCount = state.StepCount + 1 }
 
     // ============ FANIN OPERATIONS ============
     // Uses inline SRTP to accept Task fn, Async fn, TypedAgent, Executor, or Step directly
@@ -359,11 +442,15 @@ module WorkflowCE =
     /// Alias for Task.FromResult - lifts sync values to Task for workflow compatibility
     let toTask = Task.FromResult
 
-    /// Converts any supported type to Step<'i, 'o> for use in fanOut lists.
+    /// Converts any supported type to Step<'i, 'o>.
     /// Supports: Task fn, Async fn, TypedAgent, Executor, or Step passthrough.
-    /// Example: fanOut [s taskFn; s asyncFn; s agent]
-    let inline s (x: ^T) : Step<'i, 'o> =
+    /// Primarily used for fanOut lists with 6+ branches: fanOut [step fn1; step fn2; ...]
+    let inline step (x: ^T) : Step<'i, 'o> =
         ((^T or StepConv) : (static member ToStep: StepConv * ^T -> Step<'i, 'o>) (StepConv, x))
+
+    /// Prefix operator shorthand for 'step'. Converts any supported type to Step<'i, 'o>.
+    /// Example: fanOut [+fn1; +fn2; +fn3; +fn4; +fn5; +fn6]
+    let inline (~+) (x: ^T) : Step<'i, 'o> = step x
 
 
 /// Functions for executing workflows
