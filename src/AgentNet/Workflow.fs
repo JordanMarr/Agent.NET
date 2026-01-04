@@ -124,6 +124,7 @@ type WorkflowDef<'input, 'output> = {
 /// Internal state carrier that threads type information through the builder
 type WorkflowState<'input, 'output> = {
     Steps: WorkflowStep list
+    StepCount: int
 }
 
 
@@ -189,54 +190,211 @@ module internal WorkflowInternal =
 /// Builder for the workflow computation expression
 type WorkflowBuilder() =
 
-    member _.Yield(_) : WorkflowState<'a, 'a> = { Steps = [] }
+    member _.Yield(_) : WorkflowState<'a, 'a> = { Steps = []; StepCount = 0 }
 
-    /// Starts the workflow with an executor
+    // ============ START OPERATIONS ============
+
+    /// Starts workflow with a Task-returning function
+    [<CustomOperation("start")>]
+    member _.Start(state: WorkflowState<_, _>, fn: 'i -> Task<'o>) : WorkflowState<'i, 'o> =
+        let name = $"Step {state.StepCount + 1}"
+        { Steps = state.Steps @ [WorkflowInternal.wrapExecutor (Executor.fromTask name fn)]; StepCount = state.StepCount + 1 }
+
+    /// Starts workflow with a named Task-returning function
+    [<CustomOperation("start")>]
+    member _.Start(state: WorkflowState<_, _>, name: string, fn: 'i -> Task<'o>) : WorkflowState<'i, 'o> =
+        { Steps = state.Steps @ [WorkflowInternal.wrapExecutor (Executor.fromTask name fn)]; StepCount = state.StepCount + 1 }
+
+    /// Starts workflow with an Async-returning function
+    [<CustomOperation("start")>]
+    member _.Start(state: WorkflowState<_, _>, fn: 'i -> Async<'o>) : WorkflowState<'i, 'o> =
+        let name = $"Step {state.StepCount + 1}"
+        { Steps = state.Steps @ [WorkflowInternal.wrapExecutor (Executor.fromAsync name fn)]; StepCount = state.StepCount + 1 }
+
+    /// Starts workflow with a named Async-returning function
+    [<CustomOperation("start")>]
+    member _.Start(state: WorkflowState<_, _>, name: string, fn: 'i -> Async<'o>) : WorkflowState<'i, 'o> =
+        { Steps = state.Steps @ [WorkflowInternal.wrapExecutor (Executor.fromAsync name fn)]; StepCount = state.StepCount + 1 }
+
+    /// Starts workflow with a TypedAgent
+    [<CustomOperation("start")>]
+    member _.Start(state: WorkflowState<_, _>, agent: TypedAgent<'i, 'o>) : WorkflowState<'i, 'o> =
+        let name = $"Step {state.StepCount + 1}"
+        { Steps = state.Steps @ [WorkflowInternal.wrapExecutor (Executor.fromTypedAgent name agent)]; StepCount = state.StepCount + 1 }
+
+    /// Starts workflow with a named TypedAgent
+    [<CustomOperation("start")>]
+    member _.Start(state: WorkflowState<_, _>, name: string, agent: TypedAgent<'i, 'o>) : WorkflowState<'i, 'o> =
+        { Steps = state.Steps @ [WorkflowInternal.wrapExecutor (Executor.fromTypedAgent name agent)]; StepCount = state.StepCount + 1 }
+
+    /// Starts workflow with an Executor
     [<CustomOperation("start")>]
     member _.Start(state: WorkflowState<_, _>, executor: Executor<'i, 'o>) : WorkflowState<'i, 'o> =
-        { Steps = state.Steps @ [WorkflowInternal.wrapExecutor executor] }
+        { Steps = state.Steps @ [WorkflowInternal.wrapExecutor executor]; StepCount = state.StepCount + 1 }
 
-    /// Adds the next step to the workflow
-    /// The executor's input type must match the previous step's output type
+    // ============ NEXT OPERATIONS ============
+
+    /// Adds a Task-returning function as next step
+    [<CustomOperation("next")>]
+    member _.Next(state: WorkflowState<'input, 'middle>, fn: 'middle -> Task<'output>) : WorkflowState<'input, 'output> =
+        let name = $"Step {state.StepCount + 1}"
+        { Steps = state.Steps @ [WorkflowInternal.wrapExecutor (Executor.fromTask name fn)]; StepCount = state.StepCount + 1 }
+
+    /// Adds a named Task-returning function as next step
+    [<CustomOperation("next")>]
+    member _.Next(state: WorkflowState<'input, 'middle>, name: string, fn: 'middle -> Task<'output>) : WorkflowState<'input, 'output> =
+        { Steps = state.Steps @ [WorkflowInternal.wrapExecutor (Executor.fromTask name fn)]; StepCount = state.StepCount + 1 }
+
+    /// Adds an Async-returning function as next step
+    [<CustomOperation("next")>]
+    member _.Next(state: WorkflowState<'input, 'middle>, fn: 'middle -> Async<'output>) : WorkflowState<'input, 'output> =
+        let name = $"Step {state.StepCount + 1}"
+        { Steps = state.Steps @ [WorkflowInternal.wrapExecutor (Executor.fromAsync name fn)]; StepCount = state.StepCount + 1 }
+
+    /// Adds a named Async-returning function as next step
+    [<CustomOperation("next")>]
+    member _.Next(state: WorkflowState<'input, 'middle>, name: string, fn: 'middle -> Async<'output>) : WorkflowState<'input, 'output> =
+        { Steps = state.Steps @ [WorkflowInternal.wrapExecutor (Executor.fromAsync name fn)]; StepCount = state.StepCount + 1 }
+
+    /// Adds a TypedAgent as next step
+    [<CustomOperation("next")>]
+    member _.Next(state: WorkflowState<'input, 'middle>, agent: TypedAgent<'middle, 'output>) : WorkflowState<'input, 'output> =
+        let name = $"Step {state.StepCount + 1}"
+        { Steps = state.Steps @ [WorkflowInternal.wrapExecutor (Executor.fromTypedAgent name agent)]; StepCount = state.StepCount + 1 }
+
+    /// Adds a named TypedAgent as next step
+    [<CustomOperation("next")>]
+    member _.Next(state: WorkflowState<'input, 'middle>, name: string, agent: TypedAgent<'middle, 'output>) : WorkflowState<'input, 'output> =
+        { Steps = state.Steps @ [WorkflowInternal.wrapExecutor (Executor.fromTypedAgent name agent)]; StepCount = state.StepCount + 1 }
+
+    /// Adds an Executor as next step
     [<CustomOperation("next")>]
     member _.Next(state: WorkflowState<'input, 'middle>, executor: Executor<'middle, 'output>) : WorkflowState<'input, 'output> =
-        { Steps = state.Steps @ [WorkflowInternal.wrapExecutor executor] }
+        { Steps = state.Steps @ [WorkflowInternal.wrapExecutor executor]; StepCount = state.StepCount + 1 }
+
+    // ============ ROUTING ============
 
     /// Routes to different executors based on the previous step's output
     /// Use with pattern matching: route (function | CaseA -> exec1 | CaseB -> exec2)
     [<CustomOperation("route")>]
     member _.Route(state: WorkflowState<'input, 'middle>, router: 'middle -> Executor<'middle, 'output>) : WorkflowState<'input, 'output> =
-        { Steps = state.Steps @ [WorkflowInternal.wrapRouter router] }
+        { Steps = state.Steps @ [WorkflowInternal.wrapRouter router]; StepCount = state.StepCount + 1 }
+
+    // ============ FANOUT OPERATIONS ============
+
+    /// Runs multiple Task-returning functions in parallel (fan-out)
+    [<CustomOperation("fanOut")>]
+    member _.FanOut(state: WorkflowState<'input, 'middle>, fns: ('middle -> Task<'o>) list) : WorkflowState<'input, 'o list> =
+        let executors = fns |> List.mapi (fun i fn -> Executor.fromTask $"Parallel {i+1}" fn)
+        { Steps = state.Steps @ [WorkflowInternal.wrapParallel executors]; StepCount = state.StepCount + 1 }
+
+    /// Runs multiple Async-returning functions in parallel (fan-out)
+    [<CustomOperation("fanOut")>]
+    member _.FanOut(state: WorkflowState<'input, 'middle>, fns: ('middle -> Async<'o>) list) : WorkflowState<'input, 'o list> =
+        let executors = fns |> List.mapi (fun i fn -> Executor.fromAsync $"Parallel {i+1}" fn)
+        { Steps = state.Steps @ [WorkflowInternal.wrapParallel executors]; StepCount = state.StepCount + 1 }
+
+    /// Runs multiple TypedAgents in parallel (fan-out)
+    [<CustomOperation("fanOut")>]
+    member _.FanOut(state: WorkflowState<'input, 'middle>, agents: TypedAgent<'middle, 'o> list) : WorkflowState<'input, 'o list> =
+        let executors = agents |> List.mapi (fun i a -> Executor.fromTypedAgent $"Parallel {i+1}" a)
+        { Steps = state.Steps @ [WorkflowInternal.wrapParallel executors]; StepCount = state.StepCount + 1 }
 
     /// Runs multiple executors in parallel on the same input (fan-out)
-    /// Output becomes a list of all results
     [<CustomOperation("fanOut")>]
     member _.FanOut(state: WorkflowState<'input, 'middle>, executors: Executor<'middle, 'o> list) : WorkflowState<'input, 'o list> =
-        { Steps = state.Steps @ [WorkflowInternal.wrapParallel executors] }
+        { Steps = state.Steps @ [WorkflowInternal.wrapParallel executors]; StepCount = state.StepCount + 1 }
 
-    /// Aggregates parallel results into a single output (fan-in)
-    /// Converts the obj list from fanOut into a typed list for the executor
+    // ============ FANIN OPERATIONS ============
+
+    /// Aggregates parallel results with a Task-returning function (fan-in)
+    [<CustomOperation("fanIn")>]
+    member _.FanIn(state: WorkflowState<'input, 'elem list>, fn: 'elem list -> Task<'output>) : WorkflowState<'input, 'output> =
+        let name = $"Step {state.StepCount + 1}"
+        { Steps = state.Steps @ [WorkflowInternal.wrapFanIn (Executor.fromTask name fn)]; StepCount = state.StepCount + 1 }
+
+    /// Aggregates parallel results with a named Task-returning function (fan-in)
+    [<CustomOperation("fanIn")>]
+    member _.FanIn(state: WorkflowState<'input, 'elem list>, name: string, fn: 'elem list -> Task<'output>) : WorkflowState<'input, 'output> =
+        { Steps = state.Steps @ [WorkflowInternal.wrapFanIn (Executor.fromTask name fn)]; StepCount = state.StepCount + 1 }
+
+    /// Aggregates parallel results with an Async-returning function (fan-in)
+    [<CustomOperation("fanIn")>]
+    member _.FanIn(state: WorkflowState<'input, 'elem list>, fn: 'elem list -> Async<'output>) : WorkflowState<'input, 'output> =
+        let name = $"Step {state.StepCount + 1}"
+        { Steps = state.Steps @ [WorkflowInternal.wrapFanIn (Executor.fromAsync name fn)]; StepCount = state.StepCount + 1 }
+
+    /// Aggregates parallel results with a named Async-returning function (fan-in)
+    [<CustomOperation("fanIn")>]
+    member _.FanIn(state: WorkflowState<'input, 'elem list>, name: string, fn: 'elem list -> Async<'output>) : WorkflowState<'input, 'output> =
+        { Steps = state.Steps @ [WorkflowInternal.wrapFanIn (Executor.fromAsync name fn)]; StepCount = state.StepCount + 1 }
+
+    /// Aggregates parallel results with a TypedAgent (fan-in)
+    [<CustomOperation("fanIn")>]
+    member _.FanIn(state: WorkflowState<'input, 'elem list>, agent: TypedAgent<'elem list, 'output>) : WorkflowState<'input, 'output> =
+        let name = $"Step {state.StepCount + 1}"
+        { Steps = state.Steps @ [WorkflowInternal.wrapFanIn (Executor.fromTypedAgent name agent)]; StepCount = state.StepCount + 1 }
+
+    /// Aggregates parallel results with a named TypedAgent (fan-in)
+    [<CustomOperation("fanIn")>]
+    member _.FanIn(state: WorkflowState<'input, 'elem list>, name: string, agent: TypedAgent<'elem list, 'output>) : WorkflowState<'input, 'output> =
+        { Steps = state.Steps @ [WorkflowInternal.wrapFanIn (Executor.fromTypedAgent name agent)]; StepCount = state.StepCount + 1 }
+
+    /// Aggregates parallel results with an executor (fan-in)
     [<CustomOperation("fanIn")>]
     member _.FanIn(state: WorkflowState<'input, 'elem list>, executor: Executor<'elem list, 'output>) : WorkflowState<'input, 'output> =
-        { Steps = state.Steps @ [WorkflowInternal.wrapFanIn executor] }
+        { Steps = state.Steps @ [WorkflowInternal.wrapFanIn executor]; StepCount = state.StepCount + 1 }
+
+    // ============ RESILIENCE OPERATIONS ============
 
     /// Sets retry count for the previous step
     [<CustomOperation("retry")>]
     member _.Retry(state: WorkflowState<'input, 'output>, count: int) : WorkflowState<'input, 'output> =
-        { Steps = state.Steps |> WorkflowInternal.modifyLastWithResilience (fun s -> { s with RetryCount = count }) }
+        { state with Steps = state.Steps |> WorkflowInternal.modifyLastWithResilience (fun s -> { s with RetryCount = count }) }
 
     /// Sets backoff strategy for retries on the previous step
     [<CustomOperation("backoff")>]
     member _.Backoff(state: WorkflowState<'input, 'output>, strategy: BackoffStrategy) : WorkflowState<'input, 'output> =
-        { Steps = state.Steps |> WorkflowInternal.modifyLastWithResilience (fun s -> { s with Backoff = strategy }) }
+        { state with Steps = state.Steps |> WorkflowInternal.modifyLastWithResilience (fun s -> { s with Backoff = strategy }) }
 
     /// Sets timeout for the previous step
     [<CustomOperation("timeout")>]
     member _.Timeout(state: WorkflowState<'input, 'output>, duration: TimeSpan) : WorkflowState<'input, 'output> =
-        { Steps = state.Steps |> WorkflowInternal.modifyLastWithResilience (fun s -> { s with Timeout = Some duration }) }
+        { state with Steps = state.Steps |> WorkflowInternal.modifyLastWithResilience (fun s -> { s with Timeout = Some duration }) }
 
-    /// Sets fallback executor for the previous step (used if all retries fail)
-    /// The fallback executor must have matching input/output types
+    // ============ FALLBACK OPERATIONS ============
+
+    /// Sets fallback Task-returning function for the previous step
+    [<CustomOperation("fallback")>]
+    member _.Fallback(state: WorkflowState<'input, 'output>, fn: 'middle -> Task<'output>) : WorkflowState<'input, 'output> =
+        let fallbackFn (input: obj) (_ctx: WorkflowContext) : Task<obj> = task {
+            let typedInput = unbox<'middle> input
+            let! result = fn typedInput
+            return box result
+        }
+        { state with Steps = state.Steps |> WorkflowInternal.modifyLastWithResilience (fun s -> { s with Fallback = Some fallbackFn }) }
+
+    /// Sets fallback Async-returning function for the previous step
+    [<CustomOperation("fallback")>]
+    member _.Fallback(state: WorkflowState<'input, 'output>, fn: 'middle -> Async<'output>) : WorkflowState<'input, 'output> =
+        let fallbackFn (input: obj) (_ctx: WorkflowContext) : Task<obj> = task {
+            let typedInput = unbox<'middle> input
+            let! result = fn typedInput |> Async.StartAsTask
+            return box result
+        }
+        { state with Steps = state.Steps |> WorkflowInternal.modifyLastWithResilience (fun s -> { s with Fallback = Some fallbackFn }) }
+
+    /// Sets fallback TypedAgent for the previous step
+    [<CustomOperation("fallback")>]
+    member _.Fallback(state: WorkflowState<'input, 'output>, agent: TypedAgent<'middle, 'output>) : WorkflowState<'input, 'output> =
+        let fallbackFn (input: obj) (_ctx: WorkflowContext) : Task<obj> = task {
+            let typedInput = unbox<'middle> input
+            let! result = TypedAgent.invoke typedInput agent
+            return box result
+        }
+        { state with Steps = state.Steps |> WorkflowInternal.modifyLastWithResilience (fun s -> { s with Fallback = Some fallbackFn }) }
+
+    /// Sets fallback executor for the previous step
     [<CustomOperation("fallback")>]
     member _.Fallback(state: WorkflowState<'input, 'output>, executor: Executor<'middle, 'output>) : WorkflowState<'input, 'output> =
         let fallbackFn (input: obj) (ctx: WorkflowContext) : Task<obj> = task {
@@ -244,7 +402,7 @@ type WorkflowBuilder() =
             let! result = executor.Execute typedInput ctx
             return box result
         }
-        { Steps = state.Steps |> WorkflowInternal.modifyLastWithResilience (fun s -> { s with Fallback = Some fallbackFn }) }
+        { state with Steps = state.Steps |> WorkflowInternal.modifyLastWithResilience (fun s -> { s with Fallback = Some fallbackFn }) }
 
     /// Builds the final workflow definition
     member _.Run(state: WorkflowState<'input, 'output>) : WorkflowDef<'input, 'output> =
@@ -255,6 +413,9 @@ type WorkflowBuilder() =
 [<AutoOpen>]
 module WorkflowCE =
     let workflow = WorkflowBuilder()
+
+    /// Alias for Task.FromResult - lifts sync values to Task for workflow compatibility
+    let toTask = Task.FromResult
 
 
 /// Functions for executing workflows
