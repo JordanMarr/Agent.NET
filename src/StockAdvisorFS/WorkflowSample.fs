@@ -110,17 +110,6 @@ let private generateReport (result: AnalysisResult) : string =
 """
 
 // ----------------------------------------------------------------------------
-// Workflow Definition
-// ----------------------------------------------------------------------------
-
-/// Multi-stock comparison workflow using the AgentNet workflow DSL
-let private stockComparisonWorkflow typedAgent = workflow {
-    start (Executor.fromTask "FetchBothStocks" fetchBothStocks)
-    next (Executor.fromTypedAgent "CompareStocks" typedAgent)
-    next (Executor.fromFn "GenerateReport" generateReport)
-}
-
-// ----------------------------------------------------------------------------
 // Public Entry Point
 // ----------------------------------------------------------------------------
 
@@ -132,7 +121,12 @@ let run (symbol1: string) (symbol2: string) : Task<unit> = task {
     let chatClient = createChatClient ()
     let chatAgent = createAnalysisAgent chatClient
     let typedAgent = createTypedAnalysisAgent chatAgent
-    let wf = stockComparisonWorkflow typedAgent
+
+    let wf = workflow {
+        start (Executor.fromTask "FetchBothStocks" fetchBothStocks)
+        next (Executor.fromTypedAgent "CompareStocks" typedAgent)
+        next (Executor.fromFn "GenerateReport" generateReport)
+    }
 
     printfn "Step 1: Fetching stock data in parallel..."
     printfn "Step 2: AI agent analyzing stocks..."
