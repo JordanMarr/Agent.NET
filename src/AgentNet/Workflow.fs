@@ -78,18 +78,11 @@ module Executor =
         }
 
 
-/// Wrapper type for sync function results. Allows the type system to distinguish
-/// sync functions from async functions without requiring operators at the call site.
-/// Use with |> toSync at the end of a sync function body.
-type Sync<'a> = Sync of 'a
-
-
-/// A workflow step type that unifies Task functions, Async functions, sync functions, TypedAgents, and Executors.
+/// A workflow step type that unifies Task functions, Async functions, TypedAgents, and Executors.
 /// This enables clean workflow syntax and mixed-type fanOut operations.
 type Step<'i, 'o> =
     | TaskStep of ('i -> Task<'o>)
     | AsyncStep of ('i -> Async<'o>)
-    | SyncStep of ('i -> 'o)
     | AgentStep of TypedAgent<'i, 'o>
     | ExecutorStep of Executor<'i, 'o>
 
@@ -99,7 +92,6 @@ type Step<'i, 'o> =
 type StepConv = StepConv with
     static member inline ToStep(_: StepConv, fn: 'i -> Task<'o>) : Step<'i, 'o> = TaskStep fn
     static member inline ToStep(_: StepConv, fn: 'i -> Async<'o>) : Step<'i, 'o> = AsyncStep fn
-    static member inline ToStep(_: StepConv, fn: 'i -> Sync<'o>) : Step<'i, 'o> = SyncStep (fn >> fun (Sync x) -> x)
     static member inline ToStep(_: StepConv, agent: TypedAgent<'i, 'o>) : Step<'i, 'o> = AgentStep agent
     static member inline ToStep(_: StepConv, exec: Executor<'i, 'o>) : Step<'i, 'o> = ExecutorStep exec
     static member inline ToStep(_: StepConv, step: Step<'i, 'o>) : Step<'i, 'o> = step  // Passthrough
@@ -157,7 +149,6 @@ module WorkflowInternal =
         match step with
         | TaskStep fn -> Executor.fromTask name fn
         | AsyncStep fn -> Executor.fromAsync name fn
-        | SyncStep fn -> Executor.fromFn name fn
         | AgentStep agent -> Executor.fromTypedAgent name agent
         | ExecutorStep exec -> { exec with Name = name }
 
@@ -448,10 +439,10 @@ type WorkflowBuilder() =
 module WorkflowCE =
     let workflow = WorkflowBuilder()
 
-    /// Wraps a sync result in Sync<'a>. Use at the end of sync function bodies.
+    /// Wraps a value in Task. Use at end of sync function bodies.
     /// This allows sync functions to work in workflows without operators at the call site.
-    /// Example: let parseFn (s: string) = s.Length |> toSync
-    let toSync x = Sync x
+    /// Example: let parseFn (s: string) = s.Length |> toTask
+    let toTask x = Task.FromResult x
 
     /// Converts any supported type to Step<'i, 'o>.
     /// Supports: Task fn, Async fn, TypedAgent, Executor, or Step passthrough.
@@ -463,14 +454,11 @@ module WorkflowCE =
     /// Example: fanOut [+fn1; +fn2; +fn3; +fn4; +fn5; +fn6]
     let inline (~+) (x: ^T) : Step<'i, 'o> = step x
 
-    /// Wraps a sync function ('i -> 'o) as SyncStep.
+    /// Wraps a sync function ('i -> 'o) as TaskStep via Task.FromResult.
     /// Use this to explicitly mark synchronous functions in workflows.
-    /// Example: workflow { start (sync parseFn); next (sync transformFn) }
-    let inline sync (fn: 'i -> 'o) : Step<'i, 'o> = SyncStep fn
-
-    /// Prefix operator shorthand for 'sync'. Wraps ('i -> 'o) as SyncStep.
     /// Example: workflow { start %parseFn; next %transformFn }
-    let inline (~%) (fn: 'i -> 'o) : Step<'i, 'o> = sync fn
+    let inline (~%) (fn: 'i -> 'o) : Step<'i, 'o> =
+        TaskStep (fun x -> Task.FromResult(fn x))
 
 
 /// Functions for executing workflows
