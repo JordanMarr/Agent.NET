@@ -48,6 +48,15 @@ module MAF =
                 let! response = mafAgent.RunAsync(message, thread)
                 return response.Text
             }
+            ChatFull = fun message -> task {
+                let! response = mafAgent.RunAsync(message, thread)
+                // Return the user message and assistant response
+                let messages : AgentNet.ChatMessage list = [
+                    { Role = AgentNet.ChatRole.User; Content = message }
+                    { Role = AgentNet.ChatRole.Assistant; Content = response.Text }
+                ]
+                return { Text = response.Text; Messages = messages }
+            }
         }
 
 /// Extends ChatAgent type with the build function (requires MAF)

@@ -9,10 +9,30 @@ type ChatAgentConfig = {
     Tools: ToolDef list
 }
 
+/// Role of a participant in a chat conversation
+type ChatRole =
+    | User
+    | Assistant
+    | System
+    | Tool
+
+/// A message in a chat conversation
+type ChatMessage = {
+    Role: ChatRole
+    Content: string
+}
+
+/// Full response from a chat agent including conversation history
+type ChatResponse = {
+    Text: string
+    Messages: ChatMessage list
+}
+
 /// Represents an AI agent that can chat and use tools
 type ChatAgent = {
     Config: ChatAgentConfig
     Chat: string -> Task<string>
+    ChatFull: string -> Task<ChatResponse>
 }
 
 /// Pipeline functions for creating chat agents
