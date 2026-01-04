@@ -148,7 +148,7 @@ let searchTool =
     |> Tool.describe "Searches the knowledge base for relevant documents"
 ```
 
-### Agents: Pipeline-Style Configuration
+### ChatAgent: Pipeline-Style Configuration
 
 Build agents using a clean pipeline:
 
@@ -176,6 +176,54 @@ let! response = stockAdvisor.Chat("Compare AAPL and MSFT performance")
 // Access the underlying config if needed
 printfn $"Agent: {stockAdvisor.Config.Name}"
 ```
+
+### TypedAgent: Structured Input/Output for Workflows
+
+While `ChatAgent` works with strings (`string -> Task<string>`), workflows often need typed data flowing between steps. `TypedAgent` wraps a `ChatAgent` with format/parse functions to enable strongly-typed workflows:
+
+```fsharp
+// Domain types for your workflow
+type StockPair = { Stock1: StockData; Stock2: StockData }
+type AnalysisResult = { Pair: StockPair; Analysis: string }
+
+// Define a function to format the typed input into a prompt.
+let formatStockPair (pair: StockPair) =
+    $"""Compare these two stocks:
+    {pair.Stock1.Symbol}: {pair.Stock1.Info}
+    {pair.Stock2.Symbol}: {pair.Stock2.Info}"""
+
+// Define a function that the AI can use to return a typed output.
+let parseAnalysisResult (pair: StockPair) (response: string) =
+    { Pair = pair; Analysis = response }
+
+// Create the typed agent
+let typedAnalyst = TypedAgent.create formatStockPair parseAnalysisResult stockAnalystAgent
+```
+
+**Using TypedAgent standalone:**
+
+```fsharp
+// Invoke with typed input, get typed output
+let! result = typedAnalyst.Invoke(stockPair)
+printfn $"Analysis: {result.Analysis}"
+```
+
+**Using TypedAgent in workflows:**
+
+The real power is using `TypedAgent` as a strongly-typed step in a workflow:
+
+```fsharp
+let comparisonWorkflow = workflow {
+    start (Executor.fromTask "FetchStocks" fetchBothStocks)
+    next (Executor.fromTypedAgent "AnalyzeStocks" typedAnalyst)  // StockPair -> AnalysisResult
+    next (Executor.fromFn "GenerateReport" generateReport)       // AnalysisResult -> string
+}
+
+let input = { Symbol1 = "AAPL"; Symbol2 = "MSFT" }
+let! report = Workflow.run input comparisonWorkflow
+```
+
+The workflow is fully type-safe: the compiler ensures each step's output type matches the next step's input type.
 
 ### Workflows: Computation Expression for Orchestration
 
@@ -431,8 +479,12 @@ let result = ResultWorkflow.runSync rawInput documentWorkflow
 |------|-------------|
 | `ToolDef` | Tool definition with name, description, parameters, and MethodInfo |
 | `ParamInfo` | Parameter metadata: name, description, and type |
-| `AgentConfig` | Agent configuration: name, instructions, and tools |
-| `ChatAgent` | Built agent with `Chat: string -> Task<string>` |
+| `ChatAgentConfig` | Agent configuration: name, instructions, and tools |
+| `ChatAgent` | Built agent with `Chat: string -> Task<string>` and `ChatFull: string -> Task<ChatResponse>` |
+| `TypedAgent<'i,'o>` | Typed wrapper around ChatAgent with format/parse functions |
+| `ChatResponse` | Full response with `Text` and `Messages` list |
+| `ChatMessage` | Message with `Role` and `Content` |
+| `ChatRole` | Union type: User, Assistant, System, Tool |
 | `Executor<'i,'o>` | Workflow step that transforms input to output |
 | `WorkflowDef<'i,'o>` | Composable workflow definition |
 | `ResultExecutor<'i,'o,'e>` | Executor returning `Result<'o,'e>` |
@@ -449,11 +501,16 @@ Tool.describe: string -> ToolDef -> ToolDef
 ### Agent Functions
 
 ```fsharp
-ChatAgent.create: string -> AgentConfig                           // Instructions
-ChatAgent.withName: string -> AgentConfig -> AgentConfig
-ChatAgent.withTool: ToolDef -> AgentConfig -> AgentConfig
-ChatAgent.withTools: ToolDef list -> AgentConfig -> AgentConfig
-ChatAgent.build: IChatClient -> AgentConfig -> ChatAgent
+// ChatAgent - for interactive chat
+ChatAgent.create: string -> ChatAgentConfig                              // Instructions
+ChatAgent.withName: string -> ChatAgentConfig -> ChatAgentConfig
+ChatAgent.withTool: ToolDef -> ChatAgentConfig -> ChatAgentConfig
+ChatAgent.withTools: ToolDef list -> ChatAgentConfig -> ChatAgentConfig
+ChatAgent.build: IChatClient -> ChatAgentConfig -> ChatAgent
+
+// TypedAgent - for structured workflows
+TypedAgent.create: ('i -> string) -> ('i -> string -> 'o) -> ChatAgent -> TypedAgent<'i,'o>
+TypedAgent.invoke: 'i -> TypedAgent<'i,'o> -> Task<'o>
 ```
 
 ### Workflow CE Keywords
