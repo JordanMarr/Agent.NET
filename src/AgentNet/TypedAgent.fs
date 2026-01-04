@@ -3,27 +3,25 @@ namespace AgentNet
 open System.Threading.Tasks
 
 /// A typed wrapper around ChatAgent for structured input/output in workflows
-type TypedAgent<'input, 'output> = {
-    /// The underlying ChatAgent
-    ChatAgent: ChatAgent
-    /// Formats structured input into an LLM prompt string
-    FormatInput: 'input -> string
-    /// Parses the AI's response into structured output
-    ParseOutput: 'input -> string -> 'output
+type TypedAgent<'input, 'output> = 
+    {
+        /// The underlying ChatAgent
+        ChatAgent: ChatAgent
+        /// Formats structured input into an LLM prompt string
+        FormatInput: 'input -> string
+        /// Parses the AI's response into structured output
+        ParseOutput: 'input -> string -> 'output
+    }
     /// Invokes the typed agent with structured input/output
-    Invoke: 'input -> TypedAgent<'input, 'output> -> Task<'output>
-}
+    member this.Invoke (input: 'input) : Task<'output> = 
+        task { 
+            let prompt = this.FormatInput input 
+            let! response = this.ChatAgent.Chat prompt 
+            return this.ParseOutput input response 
+        }
 
 /// Module functions for TypedAgent
 module TypedAgent =
-    /// Invokes the typed agent with structured input/output
-    let invoke (input: 'input) (agent: TypedAgent<'input, 'output>) : Task<'output> =
-        task {
-            let prompt = agent.FormatInput input
-            let! response = agent.ChatAgent.Chat prompt
-            return agent.ParseOutput input response
-        }
-
     /// <summary>
     /// Creates a typed agent by wrapping a ChatAgent with format/parse functions.
     /// </summary>
@@ -38,6 +36,8 @@ module TypedAgent =
             ChatAgent = agent
             FormatInput = formatInput
             ParseOutput = parseOutput
-            Invoke = invoke
         }
 
+    /// Invokes the typed agent with structured input/output
+    let invoke (input: 'input) (agent: TypedAgent<'input, 'output>) : Task<'output> =
+        agent.Invoke input
