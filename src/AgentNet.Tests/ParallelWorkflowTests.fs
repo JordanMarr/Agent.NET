@@ -172,6 +172,31 @@ let ``FanOut with list syntax and + operator for 6+ branches``() =
     result =! 81
 
 [<Test>]
+let ``FanOut with list syntax, toTask and + operator for 6+ branches``() =
+    // Arrange: 6 branches requires list syntax with step/+ operator
+    let init = Executor.fromFn "Init" (fun (x: int) -> x)
+
+    let add1 (x: int) = x + 1 |> toTask
+    let add2 (x: int) = x + 2 |> toTask
+    let add3 (x: int) = x + 3 |> toTask
+    let add4 (x: int) = x + 4 |> toTask
+    let add5 (x: int) = x + 5 |> toTask
+    let add6 (x: int) = x + 6 |> toTask
+    let sum (nums: int list) = List.sum nums |> toTask
+
+    let parallelWorkflow = workflow {
+        start init
+        fanOut [+add1; +add2; +add3; +add4; +add5; +add6]
+        fanIn sum
+    }
+
+    // Act: 10 -> fanOut: [11, 12, 13, 14, 15, 16] -> sum: 81
+    let result = Workflow.runSync 10 parallelWorkflow
+
+    // Assert
+    result =! 81
+
+[<Test>]
 let ``FanOut with list syntax and percent operator for sync functions``() =
     // Arrange: 6 sync function branches using % operator
     let init (x: int) = x
