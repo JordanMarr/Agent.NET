@@ -41,8 +41,8 @@ And when you need to orchestrate multiple agents?
 
 ```fsharp
 let analysisWorkflow = workflow {
-    start loadData
-    fanOut [technicalAnalyst; fundamentalAnalyst; sentimentAnalyst]
+    step loadData
+    fanOut technicalAnalyst fundamentalAnalyst sentimentAnalyst
     fanIn summarize
     retry 3
     timeout (TimeSpan.FromMinutes 5.0)
@@ -103,9 +103,9 @@ let! response = assistant.Chat("What's the weather like in Seattle?")
 
 ```fsharp
 let researchWorkflow = workflow {
-    start researcher
-    next analyst
-    next writer
+    step researcher
+    step analyst
+    step writer
 }
 
 let result = Workflow.runSync "Research AI trends" researchWorkflow
@@ -214,9 +214,9 @@ The real power is using `TypedAgent` as a strongly-typed step in a workflow:
 
 ```fsharp
 let comparisonWorkflow = workflow {
-    start (Executor.fromTask "FetchStocks" fetchBothStocks)
-    next (Executor.fromTypedAgent "AnalyzeStocks" typedAnalyst)  // StockPair -> AnalysisResult
-    next (Executor.fromFn "GenerateReport" generateReport)       // AnalysisResult -> string
+    step (Executor.fromTask "FetchStocks" fetchBothStocks)
+    step (Executor.fromTypedAgent "AnalyzeStocks" typedAnalyst)  // StockPair -> AnalysisResult
+    step (Executor.fromFn "GenerateReport" generateReport)       // AnalysisResult -> string
 }
 
 let input = { Symbol1 = "AAPL"; Symbol2 = "MSFT" }
@@ -233,10 +233,10 @@ The `workflow` CE is where Agent.NET really shines. Orchestrate complex multi-ag
 
 ```fsharp
 let reportWorkflow = workflow {
-    start researcher      // Gather information
-    next analyst          // Analyze findings
-    next writer           // Write the report
-    next editor           // Polish and refine
+    step researcher      // Gather information
+    step analyst         // Analyze findings
+    step writer          // Write the report
+    step editor          // Polish and refine
 }
 ```
 
@@ -246,15 +246,19 @@ Process data through multiple agents in parallel, then combine results:
 
 ```fsharp
 let analysisWorkflow = workflow {
-    start dataLoader
-    fanOut [
+    step dataLoader
+    fanOut
         technicalAnalyst      // Chart patterns, indicators
         fundamentalAnalyst    // Financials, ratios
         sentimentAnalyst      // News, social media
-    ]
     fanIn synthesizer         // Combine all perspectives
 }
 ```
+
+> **Note:** `fanOut` supports 2-5 direct arguments. For 6+ branches, use list syntax with the `+` operator, which converts each item to a unified `Step` type (enabling mixed executors, functions, angents, and workflows in the same list):
+> ```fsharp
+> fanOut [+analyst1; +analyst2; +analyst3; +analyst4; +analyst5; +analyst6]
+> ```
 
 #### Conditional Routing
 
@@ -267,7 +271,7 @@ type Priority =
     | LowPriority of string
 
 let triageWorkflow = workflow {
-    start classifier
+    step classifier
     route (function
         | Urgent msg -> urgentHandler
         | Normal msg -> standardHandler
@@ -281,7 +285,7 @@ Build fault-tolerant workflows:
 
 ```fsharp
 let resilientWorkflow = workflow {
-    start primaryAgent
+    step primaryAgent
     retry 3                              // Retry up to 3 times
     timeout (TimeSpan.FromSeconds 30.0)  // Timeout after 30s
     fallback backupAgent                 // Use backup if all else fails
@@ -292,7 +296,7 @@ Combine resilience with other operations:
 
 ```fsharp
 let robustAnalysis = workflow {
-    start loadData
+    step loadData
     fanOut [analyst1; analyst2; analyst3]
     retry 2
     fanIn combiner
@@ -307,14 +311,22 @@ Workflows are composable - nest them freely:
 
 ```fsharp
 let innerWorkflow = workflow {
-    start stepA
-    next stepB
+    step stepA
+    step stepB
 }
 
+// Direct nesting - just pass the workflow!
 let outerWorkflow = workflow {
-    start preprocess
-    next (innerWorkflow |> Workflow.toExecutor)  // Nest the inner workflow
-    next postprocess
+    step preprocess
+    step innerWorkflow
+    step postprocess
+}
+
+// Or use toExecutor when you want explicit naming
+let namedOuter = workflow {
+    step preprocess
+    step (Workflow.toExecutor "InnerStep" innerWorkflow)
+    step postprocess
 }
 ```
 
@@ -335,7 +347,7 @@ let! result = Workflow.run "initial input" myWorkflow
 
 | Pattern | Agent.NET | Description |
 |---------|-----------|-------------|
-| **Sequential** | `start a` ➔ `next b` ➔ `next c` | Chain steps in order |
+| **Sequential** | `step a` ➔ `step b` ➔ `step c` | Chain steps in order |
 | **Parallel** | `fanOut [a; b; c]` | Execute multiple steps simultaneously |
 | **Aggregate** | `fanIn combiner` | Combine parallel results |
 | **Routing** | `route (function \| Case1 -> a \| Case2 -> b)` | Conditional branching |
@@ -343,7 +355,7 @@ let! result = Workflow.run "initial input" myWorkflow
 | **Backoff** | `backoff Backoff.Exponential` | Delay strategy between retries |
 | **Timeout** | `timeout (TimeSpan.FromSeconds 30.)` | Fail if too slow |
 | **Fallback** | `fallback backupStep` | Alternative on failure |
-| **Compose** | `next (innerWorkflow \|> Workflow.toExecutor)` | Nest workflows |
+| **Compose** | `step innerWorkflow` | Nest workflows directly |
 
 ### Side-by-Side: Agent.NET vs C# MAF
 
@@ -352,9 +364,9 @@ let! result = Workflow.run "initial input" myWorkflow
 *Agent.NET:*
 ```fsharp
 let pipeline = workflow {
-    start researcher
-    next analyst
-    next writer
+    step researcher
+    step analyst
+    step writer
 }
 ```
 
@@ -377,7 +389,7 @@ var workflow = graph.Build();
 *Agent.NET:*
 ```fsharp
 let analysis = workflow {
-    start loader
+    step loader
     fanOut [technical; fundamental; sentiment]
     fanIn summarizer
 }
@@ -408,7 +420,7 @@ var workflow = graph.Build();
 *Agent.NET:*
 ```fsharp
 let resilient = workflow {
-    start unreliableService
+    step unreliableService
     retry 3
     backoff Backoff.Exponential
     timeout (TimeSpan.FromSeconds 30.)
@@ -453,10 +465,10 @@ type ValidationError =
     | SaveError of string
 
 let documentWorkflow = resultWorkflow {
-    start (ResultExecutor.bind "Parse" parseDocument)
-    next (ResultExecutor.bind "Validate" validateSchema)
-    next (ResultExecutor.bind "Enrich" addMetadata)
-    next (ResultExecutor.map "Save" saveToDatabase)
+    step (ResultExecutor.bind "Parse" parseDocument)
+    step (ResultExecutor.bind "Validate" validateSchema)
+    step (ResultExecutor.bind "Enrich" addMetadata)
+    step (ResultExecutor.map "Save" saveToDatabase)
 }
 
 let result = ResultWorkflow.runSync rawInput documentWorkflow
@@ -517,8 +529,7 @@ TypedAgent.invoke: 'i -> TypedAgent<'i,'o> -> Task<'o>
 
 | Keyword | Description |
 |---------|-------------|
-| `start` | Begin workflow with an executor |
-| `next` | Chain the next sequential step |
+| `step` | Add a step to the workflow |
 | `fanOut` | Execute multiple executors in parallel |
 | `fanIn` | Combine parallel results into one |
 | `route` | Conditional routing based on pattern matching |
