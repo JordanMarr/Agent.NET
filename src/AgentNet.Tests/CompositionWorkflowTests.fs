@@ -302,3 +302,65 @@ let ``Full report generation pipeline with composition``() =
     result.Summary.Contains("Renewable Energy") =! true
     result.Recommendations.Length =! 2
 
+[<Test>]
+let ``Workflow can be passed directly without toExecutor``() =
+    // Arrange: Inner workflow that doubles
+    let inner = workflow {
+        start (fun (x: int) -> x * 2 |> Task.fromResult)
+    }
+
+    // Outer workflow that uses inner directly (no Workflow.toExecutor needed!)
+    let outer = workflow {
+        start (fun (x: int) -> x + 1 |> Task.fromResult)
+        next inner
+        next (fun (x: int) -> x.ToString() |> Task.fromResult)
+    }
+
+    // Act: 5 -> +1 -> 6 -> *2 -> 12 -> "12"
+    let result = Workflow.runSync 5 outer
+
+    // Assert
+    result =! "12"
+
+[<Test>]
+let ``Multiple nested workflows can be chained directly``() =
+    // Arrange: Create two inner workflows
+    let addTen = workflow {
+        start (fun (x: int) -> x + 10 |> Task.fromResult)
+    }
+
+    let multiplyByThree = workflow {
+        start (fun (x: int) -> x * 3 |> Task.fromResult)
+    }
+
+    // Chain them directly in outer workflow
+    let outer = workflow {
+        start (fun (x: int) -> x |> Task.fromResult)
+        next addTen
+        next multiplyByThree
+    }
+
+    // Act: 5 -> 5 -> +10 -> 15 -> *3 -> 45
+    let result = Workflow.runSync 5 outer
+
+    // Assert
+    result =! 45
+
+[<Test>]
+let ``Nested workflow with multiple steps works directly``() =
+    // Arrange: Inner workflow with multiple steps
+    let inner = workflow {
+        start (fun (s: string) -> s.ToUpper() |> Task.fromResult)
+        next (fun (s: string) -> s + "!" |> Task.fromResult)
+    }
+
+    let outer = workflow {
+        start (fun (s: string) -> "Hello, " + s |> Task.fromResult)
+        next inner
+    }
+
+    // Act
+    let result = Workflow.runSync "world" outer
+
+    // Assert: "Hello, world" -> "HELLO, WORLD" -> "HELLO, WORLD!"
+    result =! "HELLO, WORLD!"

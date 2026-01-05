@@ -78,25 +78,6 @@ module Executor =
         }
 
 
-/// A workflow step type that unifies Task functions, Async functions, TypedAgents, and Executors.
-/// This enables clean workflow syntax and mixed-type fanOut operations.
-type Step<'i, 'o> =
-    | TaskStep of ('i -> Task<'o>)
-    | AsyncStep of ('i -> Async<'o>)
-    | AgentStep of TypedAgent<'i, 'o>
-    | ExecutorStep of Executor<'i, 'o>
-
-
-/// SRTP witness type for converting various types to Step.
-/// Uses the type class pattern to enable inline resolution at call sites.
-type StepConv = StepConv with
-    static member inline ToStep(_: StepConv, fn: 'i -> Task<'o>) : Step<'i, 'o> = TaskStep fn
-    static member inline ToStep(_: StepConv, fn: 'i -> Async<'o>) : Step<'i, 'o> = AsyncStep fn
-    static member inline ToStep(_: StepConv, agent: TypedAgent<'i, 'o>) : Step<'i, 'o> = AgentStep agent
-    static member inline ToStep(_: StepConv, exec: Executor<'i, 'o>) : Step<'i, 'o> = ExecutorStep exec
-    static member inline ToStep(_: StepConv, step: Step<'i, 'o>) : Step<'i, 'o> = step  // Passthrough
-
-
 /// Backoff strategy for retries
 type BackoffStrategy =
     | Immediate
@@ -119,7 +100,7 @@ module ResilienceSettings =
         Fallback = None
     }
 
-/// A step in a workflow pipeline
+/// A step in a workflow pipeline (untyped, internal)
 type WorkflowStep =
     | Step of name: string * execute: (obj -> WorkflowContext -> Task<obj>)
     | Route of router: (obj -> WorkflowContext -> Task<obj>)
@@ -127,11 +108,32 @@ type WorkflowStep =
     | Resilient of settings: ResilienceSettings * inner: WorkflowStep
 
 
+/// A workflow step type that unifies Task functions, Async functions, TypedAgents, Executors, and nested Workflows.
+/// This enables clean workflow syntax and mixed-type fanOut operations.
+type Step<'i, 'o> =
+    | TaskStep of ('i -> Task<'o>)
+    | AsyncStep of ('i -> Async<'o>)
+    | AgentStep of TypedAgent<'i, 'o>
+    | ExecutorStep of Executor<'i, 'o>
+    | NestedWorkflow of WorkflowDef<'i, 'o>
+
 /// A workflow definition that can be executed
-type WorkflowDef<'input, 'output> = {
+and WorkflowDef<'input, 'output> = {
     /// The steps in the workflow, in order
     Steps: WorkflowStep list
 }
+
+
+/// SRTP witness type for converting various types to Step.
+/// Uses the type class pattern to enable inline resolution at call sites.
+type StepConv = StepConv with
+    static member inline ToStep(_: StepConv, fn: 'i -> Task<'o>) : Step<'i, 'o> = TaskStep fn
+    static member inline ToStep(_: StepConv, fn: 'i -> Async<'o>) : Step<'i, 'o> = AsyncStep fn
+    static member inline ToStep(_: StepConv, agent: TypedAgent<'i, 'o>) : Step<'i, 'o> = AgentStep agent
+    static member inline ToStep(_: StepConv, exec: Executor<'i, 'o>) : Step<'i, 'o> = ExecutorStep exec
+    static member inline ToStep(_: StepConv, step: Step<'i, 'o>) : Step<'i, 'o> = step  // Passthrough
+    static member inline ToStep(_: StepConv, wf: WorkflowDef<'i, 'o>) : Step<'i, 'o> = NestedWorkflow wf
+
 
 /// Internal state carrier that threads type information through the builder
 type WorkflowState<'input, 'output> = {
@@ -144,22 +146,39 @@ type WorkflowState<'input, 'output> = {
 [<AutoOpen>]
 module WorkflowInternal =
 
+    /// Forward reference to executeInnerStep (set by Workflow module after it's defined)
+    let mutable internal executeWorkflowStepRef: (WorkflowStep -> obj -> WorkflowContext -> Task<obj>) option = None
+
     /// Converts a Step<'i, 'o> to an Executor<'i, 'o>
+    /// Note: NestedWorkflow is handled separately in wrapStep
     let stepToExecutor<'i, 'o> (name: string) (step: Step<'i, 'o>) : Executor<'i, 'o> =
         match step with
         | TaskStep fn -> Executor.fromTask name fn
         | AsyncStep fn -> Executor.fromAsync name fn
         | AgentStep agent -> Executor.fromTypedAgent name agent
         | ExecutorStep exec -> { exec with Name = name }
+        | NestedWorkflow _ -> failwith "NestedWorkflow should be handled in wrapStep, not stepToExecutor"
 
     /// Wraps a Step as an untyped WorkflowStep
     let wrapStep<'i, 'o> (name: string) (step: Step<'i, 'o>) : WorkflowStep =
-        let exec = stepToExecutor name step
-        Step (exec.Name, fun input ctx -> task {
-            let typedInput = input :?> 'i
-            let! result = exec.Execute typedInput ctx
-            return result :> obj
-        })
+        match step with
+        | NestedWorkflow wf ->
+            // Execute all nested workflow steps in sequence
+            Step (name, fun input ctx -> task {
+                let exec = executeWorkflowStepRef.Value
+                let mutable current = input
+                for nestedStep in wf.Steps do
+                    let! result = exec nestedStep current ctx
+                    current <- result
+                return current
+            })
+        | _ ->
+            let exec = stepToExecutor name step
+            Step (exec.Name, fun input ctx -> task {
+                let typedInput = input :?> 'i
+                let! result = exec.Execute typedInput ctx
+                return result :> obj
+            })
 
     /// Wraps a list of Steps as parallel execution (supports mixed types!)
     let wrapStepParallel<'i, 'o> (steps: Step<'i, 'o> list) : WorkflowStep =
@@ -527,6 +546,9 @@ module Workflow =
             }
 
         attemptWithRetry settings.RetryCount 1
+
+    // Initialize the forward reference so nested workflows can execute
+    do WorkflowInternal.executeWorkflowStepRef <- Some executeInnerStep
 
     /// Runs a workflow with the given input and context
     let runWithContext<'input, 'output> (input: 'input) (ctx: WorkflowContext) (workflow: WorkflowDef<'input, 'output>) : Task<'output> =
