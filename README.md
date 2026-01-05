@@ -214,20 +214,28 @@ The real power is using `TypedAgent` as a strongly-typed step in a workflow:
 
 ```fsharp
 let comparisonWorkflow = workflow {
-    step (Executor.fromTask "FetchStocks" fetchBothStocks)
-    step (Executor.fromTypedAgent "AnalyzeStocks" typedAnalyst)  // StockPair -> AnalysisResult
-    step (Executor.fromFn "GenerateReport" generateReport)       // AnalysisResult -> string
+    step "FetchStocks" fetchBothStocks        // Named step with Task function
+    step "AnalyzeStocks" typedAnalyst         // TypedAgent works directly
+    step "GenerateReport" generateReport      // Sync function (returns Task.fromResult)
 }
 
 let input = { Symbol1 = "AAPL"; Symbol2 = "MSFT" }
 let! report = Workflow.run input comparisonWorkflow
 ```
 
-The workflow is fully type-safe: the compiler ensures each step's output type matches the next step's input type.
+The workflow is fully type-safe: the compiler ensures each step's output type matches the next step's input type. Steps can be named for debugging/logging, or unnamed for brevity.
 
 ### Workflows: Computation Expression for Orchestration
 
 The `workflow` CE is where Agent.NET really shines. Orchestrate complex multi-agent scenarios with elegant, readable syntax.
+
+The `step` operation directly accepts:
+- **Task functions** (`'a -> Task<'b>`)
+- **Async functions** (`'a -> Async<'b>`)
+- **TypedAgents** (`TypedAgent<'a,'b>`)
+- **Other workflows** (`WorkflowDef<'a,'b>`)
+
+No wrapping required—just pass them in. The compiler ensures each step's output type matches the next step's input type, catching mismatches at compile time.
 
 #### Sequential Pipelines
 
@@ -297,7 +305,7 @@ Combine resilience with other operations:
 ```fsharp
 let robustAnalysis = workflow {
     step loadData
-    fanOut [analyst1; analyst2; analyst3]
+    fanOut analyst1 analyst2 analyst3
     retry 2
     fanIn combiner
     timeout (TimeSpan.FromMinutes 5.0)
@@ -390,7 +398,7 @@ var workflow = graph.Build();
 ```fsharp
 let analysis = workflow {
     step loader
-    fanOut [technical; fundamental; sentiment]
+    fanOut technical fundamental sentiment
     fanIn summarizer
 }
 ```
