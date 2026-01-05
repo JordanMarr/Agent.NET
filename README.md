@@ -3,7 +3,7 @@
 **Elegant agent workflows for .NET, designed in F#.**
 
 [![NuGet](https://img.shields.io/nuget/v/AgentNet.svg)](https://www.nuget.org/packages/AgentNet)
-[![License](https://img.shields.io/github/license/JordanMarr/Agent.NET)](LICENSE)
+[![License](https://img.shields.io/github/license/JordanMarr/Agent.NET?v=1)](LICENSE)
 
 ---
 
@@ -265,17 +265,20 @@ let reportWorkflow = workflow {
 
 #### Parallel Fan-Out / Fan-In
 
-Process data through multiple agents in parallel, then combine results:
+Process data in parallel, then combine results:
 
 ```fsharp
-let analysisWorkflow = workflow {
-    step dataLoader
-    fanOut
-        technicalAnalyst      // Chart patterns, indicators
-        fundamentalAnalyst    // Financials, ratios
-        sentimentAnalyst      // News, social media
-    fanIn synthesizer         // Combine all perspectives
+let claimsWorkflow = workflow {
+    step extractClaims
+    fanOut 
+        checkPolicy 
+        assessRisk 
+        detectFraud
+    fanIn aggregateResults
+    step generateReport
 }
+    
+let report = Workflow.runSync claimData claimsWorkflow
 ```
 
 > **Note:** `fanOut` supports 2-5 direct arguments. For 6+ branches, use list syntax with the `+` operator, which converts each item to a unified `Step` type (enabling mixed executors, functions, angents, and workflows in the same list):
