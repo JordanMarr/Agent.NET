@@ -2,7 +2,7 @@
 
 **Elegant agent workflows for .NET, designed in F#.**
 
-[![NuGet](https://img.shields.io/nuget/v/Agent.NET.svg)](https://www.nuget.org/packages/Agent.NET)
+[![NuGet](https://img.shields.io/nuget/v/AgentNet.svg)](https://www.nuget.org/packages/AgentNet)
 [![License](https://img.shields.io/github/license/JordanMarr/Agent.NET)](LICENSE)
 
 ---

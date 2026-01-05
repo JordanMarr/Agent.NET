@@ -8,7 +8,7 @@
 
   <!-- NuGet Package Metadata -->
   <PropertyGroup>
-    <PackageId>Agent.NET</PackageId>
+    <PackageId>AgentNet</PackageId>
     <Version>1.0.0-alpha.1</Version>
     <Authors>Jordan Marr</Authors>
     <Description>A beautiful F# library for building AI agents on .NET. Wraps Microsoft Agent Framework with idiomatic F# APIs using quotation-based tools, pipeline-style agents, and computation expression workflows.</Description>
