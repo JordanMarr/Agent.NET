@@ -243,6 +243,16 @@ module WorkflowInternal =
             return result :> obj
         })
 
+    /// Wraps a typed router function that returns a named tuple (branchName, executor)
+    /// The router takes input and returns the branch name + executor to run on that same input
+    let wrapRouterNamed<'a, 'b> (router: 'a -> string * Executor<'a, 'b>) : WorkflowStep =
+        Route (fun input ctx -> task {
+            let typedInput = input :?> 'a
+            let (_branchName, selectedExecutor) = router typedInput
+            let! result = selectedExecutor.Execute typedInput ctx
+            return result :> obj
+        })
+
     /// Wraps a list of typed executors as untyped parallel functions
     let wrapParallel<'i, 'o> (executors: Executor<'i, 'o> list) : WorkflowStep =
         let wrappedFns =
@@ -323,6 +333,17 @@ type WorkflowBuilder() =
     [<CustomOperation("route")>]
     member _.Route(state: WorkflowState<'input, 'middle>, router: 'middle -> Executor<'middle, 'output>) : WorkflowState<'input, 'output> =
         { Steps = state.Steps @ [WorkflowInternal.wrapRouter router]; StepCount = state.StepCount + 1 }
+
+    /// Routes with explicit branch names - enables any Step type via SRTP
+    /// Use with pattern matching: routeNamed (function | CaseA -> "BranchA", handler1 | CaseB -> "BranchB", handler2)
+    [<CustomOperation("routeNamed")>]
+    member inline _.RouteNamed(state: WorkflowState<'input, 'middle>, router: 'middle -> string * ^T) : WorkflowState<'input, 'output> =
+        let wrappedRouter = fun (input: 'middle) ->
+            let (name, handler) = router input
+            let step : Step<'middle, 'output> = ((^T or StepConv) : (static member ToStep: StepConv * ^T -> Step<'middle, 'output>) (StepConv, handler))
+            let exec = WorkflowInternal.stepToExecutor name step
+            (name, exec)
+        { Steps = state.Steps @ [WorkflowInternal.wrapRouterNamed wrappedRouter]; StepCount = state.StepCount + 1 }
 
     // ============ FANOUT OPERATIONS ============
     // SRTP overloads for 2-5 arguments - no wrapper needed!

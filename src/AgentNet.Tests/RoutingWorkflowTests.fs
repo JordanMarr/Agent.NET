@@ -136,3 +136,61 @@ let ``Route followed by additional steps``() =
     // Act & Assert
     Workflow.runSync 5 routingWorkflow =! "Result: POSITIVE"
     Workflow.runSync -3 routingWorkflow =! "Result: NEGATIVE"
+
+// ============ NEW OVERLOAD TESTS ============
+
+[<Test>]
+let ``routeNamed selects correct branch with explicit names``() =
+    // Arrange
+    let analyze = Executor.fromFn "Analyze" (fun (input: string) ->
+        if input.Contains("confident") then HighConfidence 0.9
+        elif input.Contains("unsure") then LowConfidence 0.4
+        else Inconclusive)
+
+    let highHandler = Executor.fromFn "HighHandler" (fun (_: AnalysisResult) ->
+        "Processed with high confidence")
+    let lowHandler = Executor.fromFn "LowHandler" (fun (_: AnalysisResult) ->
+        "Processed with low confidence")
+    let inconclusiveHandler = Executor.fromFn "InconclusiveHandler" (fun (_: AnalysisResult) ->
+        "Needs manual review")
+
+    // Using routeNamed with explicit branch names
+    let routingWorkflow = workflow {
+        step analyze
+        routeNamed (function
+            | HighConfidence _ -> "High", highHandler
+            | LowConfidence _ -> "Low", lowHandler
+            | Inconclusive -> "Inconclusive", inconclusiveHandler)
+    }
+
+    // Act & Assert
+    Workflow.runSync "I am confident about this" routingWorkflow =! "Processed with high confidence"
+    Workflow.runSync "I am unsure about this" routingWorkflow =! "Processed with low confidence"
+    Workflow.runSync "No idea" routingWorkflow =! "Needs manual review"
+
+[<Test>]
+let ``routeNamed accepts Task functions via SRTP``() =
+    // Arrange
+    let analyze = Executor.fromFn "Analyze" (fun (input: string) ->
+        if input.Contains("confident") then HighConfidence 0.9
+        elif input.Contains("unsure") then LowConfidence 0.4
+        else Inconclusive)
+
+    // Using Task functions directly (SRTP)
+    let highHandler = fun (_: AnalysisResult) -> task { return "High confidence result" }
+    let lowHandler = fun (_: AnalysisResult) -> task { return "Low confidence result" }
+    let inconclusiveHandler = fun (_: AnalysisResult) -> task { return "Inconclusive result" }
+
+    let routingWorkflow = workflow {
+        step analyze
+        routeNamed (function
+            | HighConfidence _ -> "High", highHandler
+            | LowConfidence _ -> "Low", lowHandler
+            | Inconclusive -> "Inconclusive", inconclusiveHandler)
+    }
+
+    // Act & Assert
+    Workflow.runSync "I am confident about this" routingWorkflow =! "High confidence result"
+    Workflow.runSync "I am unsure about this" routingWorkflow =! "Low confidence result"
+    Workflow.runSync "No idea" routingWorkflow =! "Inconclusive result"
+
