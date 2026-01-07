@@ -472,6 +472,14 @@ type WorkflowBuilder() =
     member _.FanOut(state: WorkflowState<'input, 'middle>, steps: Step<'middle, 'o> list) : WorkflowState<'input, 'o list> =
         { Steps = state.Steps @ [WorkflowInternal.wrapStepParallel steps]; StepCount = state.StepCount + 1 }
 
+    /// Runs multiple sync functions in parallel via quotations: fanOut [ <@ fn1 @>; <@ fn2 @> ]
+    [<CustomOperation("fanOut")>]
+    member _.FanOut(state: WorkflowState<'input, 'middle>, exprs: Expr<'middle -> 'o> list) : WorkflowState<'input, 'o list> =
+        let steps = exprs |> List.map (fun expr ->
+            let fn = QuotationHelpers.eval expr
+            TaskStep (fun i -> task { return fn i }) : Step<'middle, 'o>)
+        { Steps = state.Steps @ [WorkflowInternal.wrapStepParallel steps]; StepCount = state.StepCount + 1 }
+
     // Named fanOut overloads - name is used as prefix for parallel step names
 
     /// Runs 2 named steps in parallel (fan-out)

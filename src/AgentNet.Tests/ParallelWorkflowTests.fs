@@ -194,16 +194,19 @@ let ``FanOut with list syntax, Task.fromResult and + operator for 6+ branches``(
 [<Test>]
 let ``FanIn with quotation syntax for sync aggregator``() =
     // Arrange: Use pure sync function with quotation syntax
-    let init = Executor.fromFn "Init" (fun (x: int) -> x)
-    let double = Executor.fromFn "Double" (fun (x: int) -> x * 2)
-    let triple = Executor.fromFn "Triple" (fun (x: int) -> x * 3)
+    let init (x: int) = x
+    let double (x: int) = x * 2
+    let triple (x: int) = x * 3
 
     // Pure sync aggregator - no Task.fromResult needed!
     let sumAll (nums: int list) = List.sum nums
 
     let parallelWorkflow = workflow {
-        step init
-        fanOut double triple
+        step <@ init @>
+        fanOut [ 
+            <@ double @>
+            <@ triple @> 
+        ]
         fanIn <@ sumAll @>
     }
 
