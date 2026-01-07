@@ -217,3 +217,24 @@ let ``Resilience modifiers apply to previous step``() =
     result =! "test-step1-step2"
     step1Attempts =! 2  // Failed once, retried
     step2Attempts =! 1  // No retries needed
+
+[<Test>]
+let ``Fallback with quotation syntax for sync function``() =
+    // Arrange: Failing step with sync fallback via quotation
+    let failingStep = Executor.fromFn "FailingStep" (fun (_: string) ->
+        failwith "Always fails"
+        "never reached")
+
+    // Pure sync fallback - no Task.fromResult needed!
+    let defaultValue (_: string) = "fallback-value"
+
+    let resilienceWorkflow = workflow {
+        step failingStep
+        fallback <@ defaultValue @>
+    }
+
+    // Act
+    let result = Workflow.runSync "test" resilienceWorkflow
+
+    // Assert
+    result =! "fallback-value"

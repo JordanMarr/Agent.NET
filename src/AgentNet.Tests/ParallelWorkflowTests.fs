@@ -31,7 +31,7 @@ let ``FanOut executes all executors and FanIn aggregates results``() =
     let parallelWorkflow = workflow {
         step "LoadData" loadData
         fanOut technicalAnalyst fundamentalAnalyst sentimentAnalyst
-        fanIn summarize
+        fanIn "Summarize" summarize
     }
 
     // Act
@@ -182,7 +182,7 @@ let ``FanOut with list syntax, Task.fromResult and + operator for 6+ branches``(
     let parallelWorkflow = workflow {
         step init
         fanOut [+add1; +add2; +add3; +add4; +add5; +add6]
-        fanIn sum
+        fanIn "Sum" sum
     }
 
     // Act: 10 -> fanOut: [11, 12, 13, 14, 15, 16] -> sum: 81
@@ -191,3 +191,24 @@ let ``FanOut with list syntax, Task.fromResult and + operator for 6+ branches``(
     // Assert
     result =! 81
 
+[<Test>]
+let ``FanIn with quotation syntax for sync aggregator``() =
+    // Arrange: Use pure sync function with quotation syntax
+    let init = Executor.fromFn "Init" (fun (x: int) -> x)
+    let double = Executor.fromFn "Double" (fun (x: int) -> x * 2)
+    let triple = Executor.fromFn "Triple" (fun (x: int) -> x * 3)
+
+    // Pure sync aggregator - no Task.fromResult needed!
+    let sumAll (nums: int list) = List.sum nums
+
+    let parallelWorkflow = workflow {
+        step init
+        fanOut double triple
+        fanIn <@ sumAll @>
+    }
+
+    // Act: 10 -> fanOut: [20, 30] -> sum: 50
+    let result = Workflow.runSync 10 parallelWorkflow
+
+    // Assert
+    result =! 50

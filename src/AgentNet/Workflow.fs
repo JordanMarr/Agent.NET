@@ -509,19 +509,25 @@ type WorkflowBuilder() =
         { Steps = state.Steps @ [WorkflowInternal.wrapStepParallelNamed name [s1; s2; s3; s4; s5]]; StepCount = state.StepCount + 1 }
 
     // ============ FANIN OPERATIONS ============
-    // Uses inline SRTP to accept Task fn, Async fn, TypedAgent, Executor, or Step directly
+    // Supports: Executor, SRTP (Task/Async/TypedAgent), or quotation for sync functions
 
-    /// Aggregates parallel results with any supported step type (uses SRTP for type resolution)
+    /// Aggregates parallel results with an Executor
     [<CustomOperation("fanIn")>]
-    member inline _.FanIn(state: WorkflowState<'input, 'elem list>, x: ^T) : WorkflowState<'input, 'output> =
-        let step : Step<'elem list, 'output> = ((^T or StepConv) : (static member ToStep: StepConv * ^T -> Step<'elem list, 'output>) (StepConv, x))
-        let name = $"Step {state.StepCount + 1}"
-        { Steps = state.Steps @ [WorkflowInternal.wrapStepFanIn name step]; StepCount = state.StepCount + 1 }
+    member _.FanIn(state: WorkflowState<'input, 'elem list>, exec: Executor<'elem list, 'output>) : WorkflowState<'input, 'output> =
+        { Steps = state.Steps @ [WorkflowInternal.wrapFanIn exec]; StepCount = state.StepCount + 1 }
 
-    /// Aggregates parallel results with a named step
+    /// Aggregates parallel results with a named step (uses SRTP for type resolution)
     [<CustomOperation("fanIn")>]
     member inline _.FanIn(state: WorkflowState<'input, 'elem list>, name: string, x: ^T) : WorkflowState<'input, 'output> =
         let step : Step<'elem list, 'output> = ((^T or StepConv) : (static member ToStep: StepConv * ^T -> Step<'elem list, 'output>) (StepConv, x))
+        { Steps = state.Steps @ [WorkflowInternal.wrapStepFanIn name step]; StepCount = state.StepCount + 1 }
+
+    /// Aggregates parallel results with a quotation (sync function, name auto-extracted)
+    [<CustomOperation("fanIn")>]
+    member _.FanIn(state: WorkflowState<'input, 'elem list>, expr: Expr<'elem list -> 'output>) : WorkflowState<'input, 'output> =
+        let name = QuotationHelpers.extractName expr
+        let fn = QuotationHelpers.eval expr
+        let step = TaskStep (fun i -> task { return fn i })
         { Steps = state.Steps @ [WorkflowInternal.wrapStepFanIn name step]; StepCount = state.StepCount + 1 }
 
     // ============ RESILIENCE OPERATIONS ============
@@ -542,12 +548,26 @@ type WorkflowBuilder() =
         { state with Steps = state.Steps |> WorkflowInternal.modifyLastWithResilience (fun s -> { s with Timeout = Some duration }) }
 
     // ============ FALLBACK OPERATIONS ============
-    // Uses inline SRTP to accept Task fn, Async fn, TypedAgent, Executor, or Step directly
+    // Supports: Executor, named SRTP (Task/Async/TypedAgent), or quotation for sync functions
 
-    /// Sets fallback for the previous step (uses SRTP for type resolution)
+    /// Sets fallback with an Executor
     [<CustomOperation("fallback")>]
-    member inline _.Fallback(state: WorkflowState<'input, 'output>, x: ^T) : WorkflowState<'input, 'output> =
+    member _.Fallback(state: WorkflowState<'input, 'output>, exec: Executor<'middle, 'output>) : WorkflowState<'input, 'output> =
+        let fallbackFn = WorkflowInternal.stepToFallback (ExecutorStep exec)
+        { state with Steps = state.Steps |> WorkflowInternal.modifyLastWithResilience (fun s -> { s with Fallback = Some fallbackFn }) }
+
+    /// Sets fallback with a named step (uses SRTP for type resolution)
+    [<CustomOperation("fallback")>]
+    member inline _.Fallback(state: WorkflowState<'input, 'output>, name: string, x: ^T) : WorkflowState<'input, 'output> =
         let step : Step<'middle, 'output> = ((^T or StepConv) : (static member ToStep: StepConv * ^T -> Step<'middle, 'output>) (StepConv, x))
+        let fallbackFn = WorkflowInternal.stepToFallback step
+        { state with Steps = state.Steps |> WorkflowInternal.modifyLastWithResilience (fun s -> { s with Fallback = Some fallbackFn }) }
+
+    /// Sets fallback with a quotation (sync function, name auto-extracted)
+    [<CustomOperation("fallback")>]
+    member _.Fallback(state: WorkflowState<'input, 'output>, expr: Expr<'middle -> 'output>) : WorkflowState<'input, 'output> =
+        let fn = QuotationHelpers.eval expr
+        let step = TaskStep (fun i -> task { return fn i })
         let fallbackFn = WorkflowInternal.stepToFallback step
         { state with Steps = state.Steps |> WorkflowInternal.modifyLastWithResilience (fun s -> { s with Fallback = Some fallbackFn }) }
 
