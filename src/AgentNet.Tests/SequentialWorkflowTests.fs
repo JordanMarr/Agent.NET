@@ -85,9 +85,9 @@ let ``Agent executors integrate with workflow DSL``() =
 
     // Build the workflow using the DSL
     let myWorkflow = workflow {
-        step researcher
-        step analyzer
-        step writer
+        step "Researcher" researcher
+        step "Analyzer" analyzer
+        step "Writer" writer
     }
 
     // Act: Run the workflow with input that matches first pattern
@@ -194,9 +194,9 @@ let ``Sync functions work with Task.fromResult wrapper``() =
     let format (n: int) = $"Result: {n}" |> Task.fromResult
 
     let syncWorkflow = workflow {
-        step parse
-        step double
-        step format
+        step "Parse" parse
+        step "Double" double
+        step "Format" format
     }
 
     // Act
@@ -213,9 +213,9 @@ let ``Mixed Task.fromResult and async functions in workflow``() =
     let formatSync (count: int) = $"Word count: {count}" |> Task.fromResult
 
     let mixedWorkflow = workflow {
-        step parseSync     // Uses Task.fromResult - no operator
-        step fetchAsync     // Async - no operator
-        step formatSync     // Uses Task.fromResult - no operator
+        step "ParseSync" parseSync
+        step "FetchAsync" fetchAsync
+        step "FormatSync" formatSync
     }
 
     // Act
@@ -223,3 +223,80 @@ let ``Mixed Task.fromResult and async functions in workflow``() =
 
     // Assert
     result =! "Word count: 5"
+
+// Helper module for quotation tests (must be defined before use)
+module TestHelpers =
+    let doubleIt (n: int) = n * 2 |> Task.fromResult
+    let formatIt (n: int) = $"Value: {n}" |> Task.fromResult
+
+[<Test>]
+let ``Named step with Task functions``() =
+    // Arrange: Define named functions (Task-returning)
+    let parse (s: string) = s.Length |> Task.fromResult
+    let double (n: int) = n * 2 |> Task.fromResult
+    let format (n: int) = $"Result: {n}" |> Task.fromResult
+
+    // Use named step for Task functions
+    let namedWorkflow = workflow {
+        step "Parse" parse
+        step "Double" double
+        step "Format" format
+    }
+
+    // Act
+    let result = Workflow.runSync "hello" namedWorkflow
+
+    // Assert
+    result =! "Result: 10"
+
+[<Test>]
+let ``Quotation-based step works with Executors``() =
+    // Arrange: Executor-based steps
+    let step1 = Executor.fromFn "Step1" (fun (s: string) -> s.ToUpper())
+    let step2 = Executor.fromFn "Step2" (fun (s: string) -> s + "!")
+
+    // Executors can be passed directly (no quotation needed)
+    let quotedWorkflow = workflow {
+        step step1
+        step step2
+    }
+
+    // Act
+    let result = Workflow.runSync "hello" quotedWorkflow
+
+    // Assert
+    result =! "HELLO!"
+
+[<Test>]
+let ``Named step works with module-level functions``() =
+    // Use named step with module-level function
+    let namedWorkflow = workflow {
+        step "DoubleIt" TestHelpers.doubleIt
+        step "FormatIt" TestHelpers.formatIt
+    }
+
+    // Act
+    let result = Workflow.runSync 5 namedWorkflow
+
+    // Assert
+    result =! "Value: 10"
+
+[<Test>]
+let ``Quotation q helper enables pure sync functions``() =
+    // Arrange: Pure sync functions (no Task wrapper needed!)
+    let parse (s: string) = s.Length
+    let double (n: int) = n * 2
+    let format (n: int) = $"Result: {n}"
+
+    // Use q for sync functions - names extracted automatically
+    let syncWorkflow = workflow {
+        step (q <@ parse @>)
+        step (q <@ double @>)
+        step (q <@ format @>)
+    }
+
+    // Act
+    let result = Workflow.runSync "hello" syncWorkflow
+
+    // Assert
+    result =! "Result: 10"

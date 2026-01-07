@@ -306,14 +306,14 @@ let ``Full report generation pipeline with composition``() =
 let ``Workflow can be passed directly without toExecutor``() =
     // Arrange: Inner workflow that doubles
     let inner = workflow {
-        step (fun (x: int) -> x * 2 |> Task.fromResult)
+        step "Double" (fun (x: int) -> x * 2 |> Task.fromResult)
     }
 
     // Outer workflow that uses inner directly (no Workflow.toExecutor needed!)
     let outer = workflow {
-        step (fun (x: int) -> x + 1 |> Task.fromResult)
-        step inner
-        step (fun (x: int) -> x.ToString() |> Task.fromResult)
+        step "AddOne" (fun (x: int) -> x + 1 |> Task.fromResult)
+        step "Inner" inner
+        step "ToString" (fun (x: int) -> x.ToString() |> Task.fromResult)
     }
 
     // Act: 5 -> +1 -> 6 -> *2 -> 12 -> "12"
@@ -326,18 +326,18 @@ let ``Workflow can be passed directly without toExecutor``() =
 let ``Multiple nested workflows can be chained directly``() =
     // Arrange: Create two inner workflows
     let addTen = workflow {
-        step (fun (x: int) -> x + 10 |> Task.fromResult)
+        step "AddTen" (fun (x: int) -> x + 10 |> Task.fromResult)
     }
 
     let multiplyByThree = workflow {
-        step (fun (x: int) -> x * 3 |> Task.fromResult)
+        step "MultiplyByThree" (fun (x: int) -> x * 3 |> Task.fromResult)
     }
 
     // Chain them directly in outer workflow
     let outer = workflow {
-        step (fun (x: int) -> x |> Task.fromResult)
-        step addTen
-        step multiplyByThree
+        step "Identity" (fun (x: int) -> x |> Task.fromResult)
+        step "AddTen" addTen
+        step "MultiplyByThree" multiplyByThree
     }
 
     // Act: 5 -> 5 -> +10 -> 15 -> *3 -> 45
@@ -350,13 +350,13 @@ let ``Multiple nested workflows can be chained directly``() =
 let ``Nested workflow with multiple steps works directly``() =
     // Arrange: Inner workflow with multiple steps
     let inner = workflow {
-        step (fun (s: string) -> s.ToUpper() |> Task.fromResult)
-        step (fun (s: string) -> s + "!" |> Task.fromResult)
+        step "ToUpper" (fun (s: string) -> s.ToUpper() |> Task.fromResult)
+        step "AddExclamation" (fun (s: string) -> s + "!" |> Task.fromResult)
     }
 
     let outer = workflow {
-        step (fun (s: string) -> "Hello, " + s |> Task.fromResult)
-        step inner
+        step "Greet" (fun (s: string) -> "Hello, " + s |> Task.fromResult)
+        step "Inner" inner
     }
 
     // Act

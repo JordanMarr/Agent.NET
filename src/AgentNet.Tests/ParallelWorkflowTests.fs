@@ -29,7 +29,7 @@ let ``FanOut executes all executors and FanIn aggregates results``() =
         { Reports = reports; Consensus = consensus; AverageScore = avgScore } |> Task.fromResult
 
     let parallelWorkflow = workflow {
-        step loadData
+        step "LoadData" loadData
         fanOut technicalAnalyst fundamentalAnalyst sentimentAnalyst
         fanIn summarize
     }

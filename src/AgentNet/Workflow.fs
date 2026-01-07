@@ -2,6 +2,8 @@ namespace AgentNet
 
 open System
 open System.Threading.Tasks
+open FSharp.Quotations
+open FSharp.Quotations.Patterns
 
 /// Context passed to executors during workflow execution
 type WorkflowContext = {
@@ -78,6 +80,47 @@ module Executor =
         }
 
 
+/// Helpers for extracting metadata from F# quotations
+module QuotationHelpers =
+
+    /// Extracts a readable name from a quotation expression.
+    /// Handles Var, PropertyGet, Call, and Lambda patterns.
+    let rec extractName (expr: Expr) : string =
+        match expr with
+        | Var v -> v.Name
+        | PropertyGet (_, prop, _) -> prop.Name
+        | Call (_, methodInfo, _) -> methodInfo.Name
+        | Lambda (_, body) -> extractName body
+        | Let (_, _, body) -> extractName body
+        | Coerce (inner, _) -> extractName inner
+        | _ -> "UnnamedStep"
+
+    /// Evaluates a quotation to get the actual value.
+    /// Uses F# PowerPack-style evaluation via Linq.RuntimeHelpers.
+    let evalUntyped (expr: Expr) : obj =
+        Microsoft.FSharp.Linq.RuntimeHelpers.LeafExpressionConverter.EvaluateQuotation expr
+
+    /// Evaluates a typed quotation to get the actual value.
+    let eval<'T> (expr: Expr<'T>) : 'T =
+        evalUntyped expr :?> 'T
+
+    /// Checks if a type is Task<_> or a subtype
+    let isTaskType (t: Type) =
+        t.IsGenericType && t.GetGenericTypeDefinition() = typedefof<Task<_>>
+
+    /// Checks if a type is Async<_>
+    let isAsyncType (t: Type) =
+        t.IsGenericType && t.GetGenericTypeDefinition() = typedefof<Async<_>>
+
+    /// Gets the return type of a function type ('a -> 'b returns 'b)
+    let getFunctionReturnType (t: Type) =
+        if Microsoft.FSharp.Reflection.FSharpType.IsFunction t then
+            let _, returnType = Microsoft.FSharp.Reflection.FSharpType.GetFunctionElements t
+            Some returnType
+        else
+            None
+
+
 /// Backoff strategy for retries
 type BackoffStrategy =
     | Immediate
@@ -124,6 +167,13 @@ and WorkflowDef<'input, 'output> = {
 }
 
 
+/// A quoted step that carries both the extracted name and the step value.
+/// Created via the `q` helper function for quotation-based steps.
+type QuotedStep<'i, 'o> = {
+    Name: string
+    Step: Step<'i, 'o>
+}
+
 /// SRTP witness type for converting various types to Step.
 /// Uses the type class pattern to enable inline resolution at call sites.
 type StepConv = StepConv with
@@ -133,6 +183,17 @@ type StepConv = StepConv with
     static member inline ToStep(_: StepConv, exec: Executor<'i, 'o>) : Step<'i, 'o> = ExecutorStep exec
     static member inline ToStep(_: StepConv, step: Step<'i, 'o>) : Step<'i, 'o> = step  // Passthrough
     static member inline ToStep(_: StepConv, wf: WorkflowDef<'i, 'o>) : Step<'i, 'o> = NestedWorkflow wf
+
+/// SRTP witness type for converting various types to named steps.
+/// Returns (name, Step) tuple for unified handling.
+type NamedStepConv = NamedStepConv with
+    // QuotedStep already has a name (created via `q` helper)
+    static member inline ToNamedStep(_: NamedStepConv, qs: QuotedStep<'i, 'o>) : string * Step<'i, 'o> =
+        (qs.Name, qs.Step)
+
+    // Executor has a name
+    static member inline ToNamedStep(_: NamedStepConv, exec: Executor<'i, 'o>) : string * Step<'i, 'o> =
+        (exec.Name, ExecutorStep exec)
 
 
 /// SRTP witness type for converting route returns to (name, Executor).
@@ -257,6 +318,10 @@ module WorkflowInternal =
             return result :> obj
         })
 
+    /// Wraps a QuotedStep (name + step) as an untyped WorkflowStep
+    let wrapQuotedStep<'i, 'o> (qs: QuotedStep<'i, 'o>) : WorkflowStep =
+        wrapStep qs.Name qs.Step
+
     /// Wraps a typed router function as an untyped route step
     /// The router takes input and returns an executor to run on that same input
     let wrapRouter<'a, 'b> (router: 'a -> Executor<'a, 'b>) : WorkflowStep =
@@ -321,30 +386,32 @@ type WorkflowBuilder() =
     member _.Yield(_) : WorkflowState<'a, 'a> = { Steps = []; StepCount = 0 }
 
     // ============ STEP OPERATIONS ============
-    // Uses inline SRTP to accept Task fn, Async fn, TypedAgent, Executor, Workflow, or Step directly
-    // Two overloads: one for first step (establishes types), one for subsequent (threads input type)
+    // Unnamed step: Executor or QuotedStep (types that carry their own name)
+    // Named step: SRTP accepts Task fn, Async fn, TypedAgent, Executor, Workflow, or Step
 
-    /// Adds first step - establishes workflow input/output types (uses SRTP for type resolution)
+    /// Adds first step (Executor or QuotedStep) - types that carry their own name
+    /// For other step types, use the named overload: step "Name" myFn
     [<CustomOperation("step")>]
     member inline _.StepFirst(state: WorkflowState<_, _>, x: ^T) : WorkflowState<'i, 'o> =
-        let step : Step<'i, 'o> = ((^T or StepConv) : (static member ToStep: StepConv * ^T -> Step<'i, 'o>) (StepConv, x))
-        let name = $"Step {state.StepCount + 1}"
+        let (name, step) : string * Step<'i, 'o> =
+            ((^T or NamedStepConv) : (static member ToNamedStep: NamedStepConv * ^T -> string * Step<'i, 'o>) (NamedStepConv, x))
         { Steps = state.Steps @ [WorkflowInternal.wrapStep name step]; StepCount = state.StepCount + 1 }
 
-    /// Adds first step with name - establishes workflow input/output types
+    /// Adds first step with name - establishes workflow input/output types (SRTP for any step type)
     [<CustomOperation("step")>]
     member inline _.StepFirst(state: WorkflowState<_, _>, name: string, x: ^T) : WorkflowState<'i, 'o> =
         let step : Step<'i, 'o> = ((^T or StepConv) : (static member ToStep: StepConv * ^T -> Step<'i, 'o>) (StepConv, x))
         { Steps = state.Steps @ [WorkflowInternal.wrapStep name step]; StepCount = state.StepCount + 1 }
 
-    /// Adds subsequent step - threads input type through (uses SRTP for type resolution)
+    /// Adds subsequent step (Executor or QuotedStep) - types that carry their own name
+    /// For other step types, use the named overload: step "Name" myFn
     [<CustomOperation("step")>]
     member inline _.Step(state: WorkflowState<'input, 'middle>, x: ^T) : WorkflowState<'input, 'output> =
-        let step : Step<'middle, 'output> = ((^T or StepConv) : (static member ToStep: StepConv * ^T -> Step<'middle, 'output>) (StepConv, x))
-        let name = $"Step {state.StepCount + 1}"
+        let (name, step) : string * Step<'middle, 'output> =
+            ((^T or NamedStepConv) : (static member ToNamedStep: NamedStepConv * ^T -> string * Step<'middle, 'output>) (NamedStepConv, x))
         { Steps = state.Steps @ [WorkflowInternal.wrapStep name step]; StepCount = state.StepCount + 1 }
 
-    /// Adds subsequent step with name - threads input type through
+    /// Adds subsequent step with name - threads input type through (SRTP for any step type)
     [<CustomOperation("step")>]
     member inline _.Step(state: WorkflowState<'input, 'middle>, name: string, x: ^T) : WorkflowState<'input, 'output> =
         let step : Step<'middle, 'output> = ((^T or StepConv) : (static member ToStep: StepConv * ^T -> Step<'middle, 'output>) (StepConv, x))
@@ -506,6 +573,16 @@ module WorkflowCE =
     /// Used for fanOut lists with 6+ branches: fanOut [+fn1; +fn2; +fn3; +fn4; +fn5; +fn6]
     let inline (~+) (x: ^T) : Step<'i, 'o> =
         ((^T or StepConv) : (static member ToStep: StepConv * ^T -> Step<'i, 'o>) (StepConv, x))
+
+    /// Quotation helper for SYNC functions - extracts name and wraps in Task.
+    /// This enables using plain 'i -> 'o functions without Task/Async wrapper.
+    /// For async functions, use: step "Name" myAsyncFn
+    /// Usage: step (q <@ mySyncFn @>)
+    let q<'i, 'o> (expr: Expr<'i -> 'o>) : QuotedStep<'i, 'o> =
+        let name = QuotationHelpers.extractName expr
+        let fn = QuotationHelpers.eval expr
+        let step = TaskStep (fun i -> task { return fn i })
+        { Name = name; Step = step }
 
 
 /// Functions for executing workflows
