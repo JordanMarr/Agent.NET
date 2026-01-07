@@ -135,6 +135,30 @@ type StepConv = StepConv with
     static member inline ToStep(_: StepConv, wf: WorkflowDef<'i, 'o>) : Step<'i, 'o> = NestedWorkflow wf
 
 
+/// SRTP witness type for converting route returns to (name, Executor).
+/// Handles both direct Executor and named tuples with various Step types.
+type RouteConv = RouteConv with
+    // Direct Executor - uses Executor.Name
+    static member inline ToRoute(_: RouteConv, exec: Executor<'i, 'o>) : string * Executor<'i, 'o> =
+        (exec.Name, exec)
+
+    // Named tuple with Executor
+    static member inline ToRoute(_: RouteConv, (name: string, exec: Executor<'i, 'o>)) : string * Executor<'i, 'o> =
+        (name, exec)
+
+    // Named tuple with Task fn
+    static member inline ToRoute(_: RouteConv, (name: string, fn: 'i -> Task<'o>)) : string * Executor<'i, 'o> =
+        (name, Executor.fromTask name fn)
+
+    // Named tuple with Async fn
+    static member inline ToRoute(_: RouteConv, (name: string, fn: 'i -> Async<'o>)) : string * Executor<'i, 'o> =
+        (name, Executor.fromAsync name fn)
+
+    // Named tuple with TypedAgent
+    static member inline ToRoute(_: RouteConv, (name: string, agent: TypedAgent<'i, 'o>)) : string * Executor<'i, 'o> =
+        (name, Executor.fromTypedAgent name agent)
+
+
 /// Internal state carrier that threads type information through the builder
 type WorkflowState<'input, 'output> = {
     Steps: WorkflowStep list
@@ -328,20 +352,16 @@ type WorkflowBuilder() =
 
     // ============ ROUTING ============
 
-    /// Routes to different executors based on the previous step's output
-    /// Use with pattern matching: route (function | CaseA -> exec1 | CaseB -> exec2)
+    /// Routes to different executors based on the previous step's output.
+    /// Accepts either:
+    ///   - Direct Executor: route (function | CaseA -> exec1 | CaseB -> exec2)
+    ///   - Named tuple with any Step type: route (function | CaseA -> "BranchA", handler1 | CaseB -> "BranchB", handler2)
     [<CustomOperation("route")>]
-    member _.Route(state: WorkflowState<'input, 'middle>, router: 'middle -> Executor<'middle, 'output>) : WorkflowState<'input, 'output> =
-        { Steps = state.Steps @ [WorkflowInternal.wrapRouter router]; StepCount = state.StepCount + 1 }
-
-    /// Routes with explicit branch names - enables any Step type via SRTP
-    /// Use with pattern matching: routeNamed (function | CaseA -> "BranchA", handler1 | CaseB -> "BranchB", handler2)
-    [<CustomOperation("routeNamed")>]
-    member inline _.RouteNamed(state: WorkflowState<'input, 'middle>, router: 'middle -> string * ^T) : WorkflowState<'input, 'output> =
+    member inline _.Route(state: WorkflowState<'input, 'middle>, router: 'middle -> ^T) : WorkflowState<'input, 'output> =
         let wrappedRouter = fun (input: 'middle) ->
-            let (name, handler) = router input
-            let step : Step<'middle, 'output> = ((^T or StepConv) : (static member ToStep: StepConv * ^T -> Step<'middle, 'output>) (StepConv, handler))
-            let exec = WorkflowInternal.stepToExecutor name step
+            let result = router input
+            let (name, exec) : string * Executor<'middle, 'output> =
+                ((^T or RouteConv) : (static member ToRoute: RouteConv * ^T -> string * Executor<'middle, 'output>) (RouteConv, result))
             (name, exec)
         { Steps = state.Steps @ [WorkflowInternal.wrapRouterNamed wrappedRouter]; StepCount = state.StepCount + 1 }
 

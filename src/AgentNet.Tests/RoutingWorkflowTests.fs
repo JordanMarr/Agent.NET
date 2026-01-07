@@ -68,8 +68,8 @@ let ``Route can extract data from DU cases``() =
     let routingWorkflow = workflow {
         step analyze
         route (function
-            | HighConfidence _ as result -> formatHigh
-            | LowConfidence _ as result -> formatLow
+            | HighConfidence _ -> formatHigh
+            | LowConfidence _ -> formatLow
             | Inconclusive -> formatInconclusive)
     }
 
@@ -140,7 +140,7 @@ let ``Route followed by additional steps``() =
 // ============ NEW OVERLOAD TESTS ============
 
 [<Test>]
-let ``routeNamed selects correct branch with explicit names``() =
+let ``Route with named tuple selects correct branch``() =
     // Arrange
     let analyze = Executor.fromFn "Analyze" (fun (input: string) ->
         if input.Contains("confident") then HighConfidence 0.9
@@ -154,10 +154,10 @@ let ``routeNamed selects correct branch with explicit names``() =
     let inconclusiveHandler = Executor.fromFn "InconclusiveHandler" (fun (_: AnalysisResult) ->
         "Needs manual review")
 
-    // Using routeNamed with explicit branch names
+    // Using route with explicit branch names (named tuple)
     let routingWorkflow = workflow {
         step analyze
-        routeNamed (function
+        route (function
             | HighConfidence _ -> "High", highHandler
             | LowConfidence _ -> "Low", lowHandler
             | Inconclusive -> "Inconclusive", inconclusiveHandler)
@@ -169,7 +169,7 @@ let ``routeNamed selects correct branch with explicit names``() =
     Workflow.runSync "No idea" routingWorkflow =! "Needs manual review"
 
 [<Test>]
-let ``routeNamed accepts Task functions via SRTP``() =
+let ``Route with named tuple accepts Task functions via SRTP``() =
     // Arrange
     let analyze = Executor.fromFn "Analyze" (fun (input: string) ->
         if input.Contains("confident") then HighConfidence 0.9
@@ -183,7 +183,7 @@ let ``routeNamed accepts Task functions via SRTP``() =
 
     let routingWorkflow = workflow {
         step analyze
-        routeNamed (function
+        route (function
             | HighConfidence _ -> "High", highHandler
             | LowConfidence _ -> "Low", lowHandler
             | Inconclusive -> "Inconclusive", inconclusiveHandler)
