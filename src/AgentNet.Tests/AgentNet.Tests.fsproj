@@ -9,6 +9,7 @@
 
   <ItemGroup>
     <Compile Include="Stubs\StubChatClient.fs" />
+    <Compile Include="DurableIdTests.fs" />
     <Compile Include="ToolTests.fs" />
     <Compile Include="SequentialWorkflowTests.fs" />
     <Compile Include="RoutingWorkflowTests.fs" />

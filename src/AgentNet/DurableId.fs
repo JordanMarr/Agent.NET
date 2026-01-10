@@ -123,3 +123,49 @@ module DurableId =
         let mi = getMethodInfo fn
         if isLambda mi then
             eprintfn $"Warning: Step '{id}' uses a lambda. Consider extracting to a named function for more readable durable IDs."
+
+    /// Tries to extract the original function name by inspecting the closure's IL.
+    /// F# closures wrap the original function, and the Invoke method calls it directly.
+    /// Only returns names for methods defined in the same assembly (not BCL calls).
+    let private tryGetCalledMethodName (fnType: Type) (inputType: Type) : string option =
+        try
+            let invokeMethod = fnType.GetMethod("Invoke", [| inputType |])
+            if isNull invokeMethod then None
+            else
+                let body = invokeMethod.GetMethodBody()
+                if isNull body then None
+                else
+                    let il = body.GetILAsByteArray()
+                    if isNull il || il.Length < 5 then None
+                    else
+                        // Find call (0x28) or callvirt (0x6F) instruction that calls
+                        // a method in the same assembly (not a BCL method)
+                        let mutable result = None
+                        for i in 0 .. il.Length - 5 do
+                            if result.IsNone && (il.[i] = 0x28uy || il.[i] = 0x6Fuy) then
+                                // Next 4 bytes are the metadata token (little-endian)
+                                let token =
+                                    int il.[i+1] |||
+                                    (int il.[i+2] <<< 8) |||
+                                    (int il.[i+3] <<< 16) |||
+                                    (int il.[i+4] <<< 24)
+                                let resolvedMethod = fnType.Module.ResolveMethod(token)
+                                if not (isNull resolvedMethod) &&
+                                   not (isNull resolvedMethod.DeclaringType) &&
+                                   resolvedMethod.DeclaringType.Assembly = fnType.Assembly then
+                                    // Only use methods from the same assembly
+                                    result <- Some resolvedMethod.Name
+                        result
+        with _ -> None
+
+    /// Gets a human-readable display name from a function.
+    /// Extracts the original function name by inspecting the closure's IL.
+    let getDisplayName<'a, 'b> (fn: 'a -> 'b) : string =
+        let fnType = fn.GetType()
+        match tryGetCalledMethodName fnType typeof<'a> with
+        | Some name when not (name.Contains("@")) && name <> "Invoke" -> name
+        | _ ->
+            // Fallback to type-based name if we can't extract the method name
+            let inputName = typeof<'a>.Name
+            let outputName = typeof<'b>.Name
+            $"Step<{inputName}, {outputName}>"

@@ -82,11 +82,14 @@ module WorkflowInternal =
         | ExecutorStep exec -> DurableId.forExecutor exec
         | NestedWorkflow _ -> DurableId.forWorkflow<'i, 'o> ()
 
-    /// Gets the display name for a Step (Executor.Name if available, otherwise uses durable ID)
+    /// Gets the display name for a Step (Executor.Name if available, otherwise uses function name)
     let getDisplayName<'i, 'o> (step: Step<'i, 'o>) : string =
         match step with
         | ExecutorStep exec -> exec.Name  // Use explicit display name from Executor
-        | _ -> getDurableId step  // Otherwise, display name = durable ID
+        | TaskStep fn -> DurableId.getDisplayName fn  // Use function name
+        | AsyncStep fn -> DurableId.getDisplayName fn  // Use function name
+        | AgentStep _ -> "Agent"  // TypedAgent doesn't have a name property
+        | NestedWorkflow _ -> "Workflow"  // Nested workflow
 
     /// Checks if a Step uses a lambda and logs a warning
     let warnIfLambda<'i, 'o> (step: Step<'i, 'o>) (id: string) : unit =
