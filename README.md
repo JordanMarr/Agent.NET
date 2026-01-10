@@ -652,19 +652,18 @@ Agent.NET supports both execution models from a single workflow definition:
 
 ## Roadmap
 
-**v1.0.0-preview.1** (Current)
+**v1.0.0-alpha** (Current)
 - In-memory workflow execution (`Workflow.run`)
+- MAF graph compilation (`Workflow.toMAF`)
 - Sequential pipelines, parallel fan-out/fan-in
 - Conditional routing (`route`)
 - Resilience (`retry`, `timeout`, `fallback`, `backoff`)
 - Result workflows (railway-oriented error handling)
 
-**Upcoming**
-- MAF compilation (`Workflow.toMAF`)
-- Redesigned `route` operation for durable-compatible conditional branching
-- Named step support for graph compilation
-
-The current `route` operation uses F# pattern matching with dynamic executor selection. To support MAF's serializable graph model, routing will be redesigned to use declarative branch registration while preserving F#'s ergonomic syntax.
+**Upcoming: AgentNet.Durable**
+- Durable-only operations: `awaitEvent<'T>`, `delay`
+- Integration with Azure Durable Functions via `Microsoft.Agents.AI.DurableTask`
+- Human-in-the-loop workflows with durable event waiting
 
 ---
 

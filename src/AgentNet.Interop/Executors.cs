@@ -6,20 +6,27 @@ namespace AgentNet.Interop;
 
 /// <summary>
 /// Custom executor that wraps an async step function.
-/// Uses the non-generic Executor base class with ConfigureRoutes.
+/// Uses AddCatchAll to handle any input type.
 /// </summary>
 public class StepExecutor(string name, Func<object, Task<object>> execute) : Executor(name)
 {
-
     /// <inheritdoc/>
     protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder)
     {
-        return routeBuilder.AddHandler<object, object>(HandleInputAsync);
+        // Use AddCatchAll to catch any input type
+        return routeBuilder.AddCatchAll(HandleInputAsync);
     }
 
-    private async ValueTask<object> HandleInputAsync(object input, IWorkflowContext context, CancellationToken ct)
+    private async ValueTask<object?> HandleInputAsync(PortableValue input, IWorkflowContext context, CancellationToken ct)
     {
-        return await execute(input);
+        // Extract the actual value from PortableValue using As<object>()
+        var actualInput = input.As<object>();
+        if (actualInput is null)
+        {
+            throw new ArgumentNullException(nameof(input), "StepExecutor received null input");
+        }
+        var result = await execute(actualInput);
+        return result;
     }
 }
 
@@ -31,12 +38,19 @@ public class ParallelExecutor(string name, IReadOnlyList<Func<object, Task<objec
     /// <inheritdoc/>
     protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder)
     {
-        return routeBuilder.AddHandler<object, object>(HandleInputAsync);
+        // Use AddCatchAll to catch any input type
+        return routeBuilder.AddCatchAll(HandleInputAsync);
     }
 
-    private async ValueTask<object> HandleInputAsync(object input, IWorkflowContext context, CancellationToken ct)
+    private async ValueTask<object?> HandleInputAsync(PortableValue input, IWorkflowContext context, CancellationToken ct)
     {
-        var tasks = branches.Select(b => b(input)).ToArray();
+        // Extract the actual value from PortableValue using As<object>()
+        var actualInput = input.As<object>();
+        if (actualInput is null)
+        {
+            throw new ArgumentNullException(nameof(input), "ParallelExecutor received null input");
+        }
+        var tasks = branches.Select(b => b(actualInput)).ToArray();
         var results = await System.Threading.Tasks.Task.WhenAll(tasks);
         return results.ToList();
     }

@@ -224,5 +224,91 @@ let ``Mixed Task_fromResult and async functions in workflow``() =
     // Assert
     result =! "Word count: 5"
 
-// ============ toMAF tests ============
-// Note: toMAF has moved to the AgentNet.Durable package (DurableWorkflow.toMAF)
+// ============ toMAF and InProcessExecution tests ============
+
+[<Test>]
+let ``Workflow_toMAF compiles sequential workflow to MAF format``() =
+    // Arrange: Simple sequential workflow
+    let step1 (s: string) = s.ToUpper() |> Task.fromResult
+    let step2 (s: string) = s + "!" |> Task.fromResult
+
+    let myWorkflow =
+        workflow {
+            step step1
+            step step2
+        }
+        |> Workflow.withName "TestWorkflow"
+
+    // Act: Compile to MAF
+    let mafWorkflow = Workflow.toMAF myWorkflow
+
+    // Assert: MAF workflow was created (basic check - no exceptions)
+    test <@ not (isNull (box mafWorkflow)) @>
+
+[<Test>]
+let ``Workflow_runInProcess executes workflow via MAF InProcessExecution``() =
+    // Arrange: Simple sequential workflow - using named executors for clarity
+    let step1 = Executor.fromFn "Step1" (fun (s: string) -> s.ToUpper())
+    let step2 = Executor.fromFn "Step2" (fun (s: string) -> s + "!!!")
+
+    let myWorkflow =
+        workflow {
+            step step1
+            step step2
+        }
+        |> Workflow.withName "InProcessTestWorkflow"
+
+    // Act: Run via InProcessExecution
+    let result = Workflow.runInProcessSync "hello" myWorkflow
+
+    // Assert
+    result =! "HELLO!!!"
+
+[<Test>]
+let ``Workflow_runInProcess handles multiple steps correctly``() =
+    // Arrange: Three-step workflow with type transformations - using named executors
+    let parse = Executor.fromFn "Parse" (fun (s: string) -> s.Length)
+    let double = Executor.fromFn "Double" (fun (n: int) -> n * 2)
+    let format = Executor.fromFn "Format" (fun (n: int) -> $"Result: {n}")
+
+    let myWorkflow =
+        workflow {
+            step parse
+            step double
+            step format
+        }
+        |> Workflow.withName "MultiStepWorkflow"
+
+    // Act
+    let result = Workflow.runInProcessSync "hello" myWorkflow
+
+    // Assert
+    result =! "Result: 10"
+
+[<Test>]
+let ``Workflow_toMAF throws when workflow has no name``() =
+    // Arrange: Workflow without a name
+    let step1 (s: string) = s.ToUpper() |> Task.fromResult
+
+    let unnamedWorkflow = workflow {
+        step step1
+    }
+
+    // Act & Assert: Should throw
+    Assert.Throws<System.Exception>(fun () ->
+        Workflow.toMAF unnamedWorkflow |> ignore
+    ) |> ignore
+
+[<Test>]
+let ``Workflow_runInProcess throws when workflow has no name``() =
+    // Arrange: Workflow without a name
+    let step1 (s: string) = s.ToUpper() |> Task.fromResult
+
+    let unnamedWorkflow = workflow {
+        step step1
+    }
+
+    // Act & Assert: Should throw
+    Assert.Throws<System.Exception>(fun () ->
+        Workflow.runInProcessSync "test" unnamedWorkflow |> ignore
+    ) |> ignore

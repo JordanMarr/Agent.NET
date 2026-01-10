@@ -5,9 +5,12 @@ open System.Threading.Tasks
 open AgentNet.Interop
 
 // Type aliases to avoid conflicts between AgentNet and MAF
+// NOTE: Don't open Microsoft.Agents.AI.Workflows to avoid Executor<,> conflict
 type MAFExecutor = Microsoft.Agents.AI.Workflows.Executor
 type MAFWorkflow = Microsoft.Agents.AI.Workflows.Workflow
 type MAFWorkflowBuilder = Microsoft.Agents.AI.Workflows.WorkflowBuilder
+type MAFInProcessExecution = Microsoft.Agents.AI.Workflows.InProcessExecution
+type MAFExecutorCompletedEvent = Microsoft.Agents.AI.Workflows.ExecutorCompletedEvent
 
 /// Backoff strategy for retries
 type BackoffStrategy =
@@ -410,7 +413,7 @@ module Workflow =
                 return! operation
         }
 
-    /// Executes an inner step (non-resilient)
+    /// Executes an inner step (non-resilient) - used by bespoke runtime
     let rec private executeInnerStep (step: WorkflowStep) (input: obj) (ctx: WorkflowContext) : Task<obj> =
         task {
             match step with
@@ -428,7 +431,7 @@ module Workflow =
                 return! executeWithResilience settings inner input ctx
         }
 
-    /// Executes a step with resilience (retry, timeout, fallback)
+    /// Executes a step with resilience (retry, timeout, fallback) - used by bespoke runtime
     and private executeWithResilience (settings: ResilienceSettings) (inner: WorkflowStep) (input: obj) (ctx: WorkflowContext) : Task<obj> =
         let rec attemptWithRetry (remainingRetries: int) (attempt: int) : Task<obj> =
             task {
@@ -464,7 +467,8 @@ module Workflow =
     // Initialize the forward reference so nested workflows can execute
     do WorkflowInternal.executeWorkflowStepRef <- Some executeInnerStep
 
-    /// Runs a workflow with the given input and context
+    /// Runs a workflow with the given input and context using bespoke F# runtime.
+    /// Provides type-safe execution with built-in resilience support.
     let runWithContext<'input, 'output> (input: 'input) (ctx: WorkflowContext) (workflow: WorkflowDef<'input, 'output>) : Task<'output> =
         task {
             let mutable current: obj = input :> obj
@@ -476,12 +480,13 @@ module Workflow =
             return current :?> 'output
         }
 
-    /// Runs a workflow with the given input (creates a new context)
+    /// Runs a workflow with the given input using bespoke F# runtime (creates a new context).
+    /// Provides type-safe execution with built-in resilience support.
     let run<'input, 'output> (input: 'input) (workflow: WorkflowDef<'input, 'output>) : Task<'output> =
         let ctx = WorkflowContext.create ()
         runWithContext input ctx workflow
 
-    /// Runs a workflow synchronously
+    /// Runs a workflow synchronously using bespoke F# runtime.
     let runSync<'input, 'output> (input: 'input) (workflow: WorkflowDef<'input, 'output>) : 'output =
         (workflow |> run input).GetAwaiter().GetResult()
 
@@ -492,7 +497,7 @@ module Workflow =
             Execute = fun input ctx -> runWithContext input ctx workflow
         }
 
-    /// Sets the name of a workflow (required for MAF compilation)
+    /// Sets the name of a workflow (required for MAF compilation and InProcessExecution)
     let withName<'input, 'output> (name: string) (workflow: WorkflowDef<'input, 'output>) : WorkflowDef<'input, 'output> =
         { workflow with Name = Some name }
 
@@ -562,3 +567,36 @@ module Workflow =
 
                 // Build and return the workflow
                 builder.Build()
+
+    // ============ MAF IN-PROCESS EXECUTION ============
+
+    /// Runs a workflow via MAF InProcessExecution.
+    /// The workflow is compiled to MAF format and executed in-process.
+    ///
+    /// IMPORTANT: The workflow must have a Name set.
+    /// Use: Workflow.withName "MyWorkflow" myWorkflow
+    let runInProcess<'input, 'output> (input: 'input) (workflow: WorkflowDef<'input, 'output>) : Task<'output> =
+        task {
+            // Compile to MAF workflow
+            let mafWorkflow = toMAF workflow
+
+            // Run via InProcessExecution
+            let! run = MAFInProcessExecution.RunAsync(mafWorkflow, input :> obj)
+            use _ = run
+
+            // Find the last ExecutorCompletedEvent - it should be the workflow output
+            let mutable lastResult: obj option = None
+            for evt in run.NewEvents do
+                match evt with
+                | :? MAFExecutorCompletedEvent as completed ->
+                    lastResult <- Some completed.Data
+                | _ -> ()
+
+            match lastResult with
+            | Some data -> return data :?> 'output
+            | None -> return failwith "Workflow did not produce output. No ExecutorCompletedEvent found."
+        }
+
+    /// Runs a workflow synchronously via MAF InProcessExecution.
+    let runInProcessSync<'input, 'output> (input: 'input) (workflow: WorkflowDef<'input, 'output>) : 'output =
+        (workflow |> runInProcess input).GetAwaiter().GetResult()
