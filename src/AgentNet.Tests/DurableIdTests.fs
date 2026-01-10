@@ -22,11 +22,11 @@ let ``getDisplayName extracts name from named Async function``() =
     displayName =! "namedAsyncFunction"
 
 [<Test>]
-let ``getDisplayName returns type-based name for inline lambda``() =
+let ``getDisplayName extracts binding name for lambda``() =
     let lambdaFn = fun (x: int) -> Task.FromResult (string x)
     let displayName = DurableId.getDisplayName lambdaFn
-    // Lambdas don't have a named method to call, so we get type-based name
-    displayName =! "Step<Int32, Task`1>"
+    // Lambda closures are named after their binding, so we get "lambdaFn"
+    displayName =! "lambdaFn"
 
 [<Test>]
 let ``forStep generates stable ID based on type signature``() =
@@ -44,3 +44,11 @@ let ``forStep generates different IDs for different type signatures``() =
     let id1 = DurableId.forStep fn1
     let id2 = DurableId.forStep fn2
     id1 <>! id2
+
+[<Test>]
+let ``getDisplayName extracts name from local function``() =
+    // Local function defined inside this test
+    let localProcessor (x: int) = Task.FromResult (x * 2)
+
+    let displayName = DurableId.getDisplayName localProcessor
+    displayName =! "localProcessor"

@@ -158,14 +158,36 @@ module DurableId =
                         result
         with _ -> None
 
+    /// Tries to extract function name from closure type name (e.g., "localProcessor@51" -> "localProcessor")
+    let private tryGetNameFromClosureType (fnType: Type) : string option =
+        let typeName = fnType.Name
+        if typeName.Contains("@") then
+            let atIndex = typeName.IndexOf('@')
+            let namePart = typeName.Substring(0, atIndex)
+            // Filter out common non-meaningful names
+            if String.IsNullOrEmpty(namePart) ||
+               namePart = "clo" ||
+               namePart = "Invoke" ||
+               namePart.StartsWith("_") then
+                None
+            else
+                Some namePart
+        else
+            None
+
     /// Gets a human-readable display name from a function.
-    /// Extracts the original function name by inspecting the closure's IL.
+    /// Extracts the original function name by inspecting the closure's IL or type name.
     let getDisplayName<'a, 'b> (fn: 'a -> 'b) : string =
         let fnType = fn.GetType()
+        // First try: look at what method the closure calls (works for module-level functions)
         match tryGetCalledMethodName fnType typeof<'a> with
         | Some name when not (name.Contains("@")) && name <> "Invoke" -> name
         | _ ->
-            // Fallback to type-based name if we can't extract the method name
-            let inputName = typeof<'a>.Name
-            let outputName = typeof<'b>.Name
-            $"Step<{inputName}, {outputName}>"
+            // Second try: extract name from closure type name (works for local functions)
+            match tryGetNameFromClosureType fnType with
+            | Some name -> name
+            | None ->
+                // Fallback to type-based name
+                let inputName = typeof<'a>.Name
+                let outputName = typeof<'b>.Name
+                $"Step<{inputName}, {outputName}>"
