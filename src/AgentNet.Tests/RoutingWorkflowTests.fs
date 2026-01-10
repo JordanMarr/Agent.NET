@@ -137,16 +137,17 @@ let ``Route followed by additional steps``() =
     Workflow.runSync 5 routingWorkflow =! "Result: POSITIVE"
     Workflow.runSync -3 routingWorkflow =! "Result: NEGATIVE"
 
-// ============ NEW OVERLOAD TESTS ============
+// ============ Route with auto-generated durable IDs ============
 
 [<Test>]
-let ``Route with named tuple selects correct branch``() =
+let ``Route with Executor uses Executor name for display``() =
     // Arrange
     let analyze = Executor.fromFn "Analyze" (fun (input: string) ->
         if input.Contains("confident") then HighConfidence 0.9
         elif input.Contains("unsure") then LowConfidence 0.4
         else Inconclusive)
 
+    // Using Executors with explicit display names
     let highHandler = Executor.fromFn "HighHandler" (fun (_: AnalysisResult) ->
         "Processed with high confidence")
     let lowHandler = Executor.fromFn "LowHandler" (fun (_: AnalysisResult) ->
@@ -154,13 +155,12 @@ let ``Route with named tuple selects correct branch``() =
     let inconclusiveHandler = Executor.fromFn "InconclusiveHandler" (fun (_: AnalysisResult) ->
         "Needs manual review")
 
-    // Using route with explicit branch names (named tuple)
     let routingWorkflow = workflow {
         step analyze
         route (function
-            | HighConfidence _ -> "High", highHandler
-            | LowConfidence _ -> "Low", lowHandler
-            | Inconclusive -> "Inconclusive", inconclusiveHandler)
+            | HighConfidence _ -> highHandler
+            | LowConfidence _ -> lowHandler
+            | Inconclusive -> inconclusiveHandler)
     }
 
     // Act & Assert
@@ -169,14 +169,14 @@ let ``Route with named tuple selects correct branch``() =
     Workflow.runSync "No idea" routingWorkflow =! "Needs manual review"
 
 [<Test>]
-let ``Route with named tuple accepts Task functions via SRTP``() =
+let ``Route accepts Task functions via SRTP with auto-generated IDs``() =
     // Arrange
     let analyze = Executor.fromFn "Analyze" (fun (input: string) ->
         if input.Contains("confident") then HighConfidence 0.9
         elif input.Contains("unsure") then LowConfidence 0.4
         else Inconclusive)
 
-    // Using Task functions directly (SRTP)
+    // Using Task functions directly (SRTP) - durable IDs auto-generated
     let highHandler = fun (_: AnalysisResult) -> task { return "High confidence result" }
     let lowHandler = fun (_: AnalysisResult) -> task { return "Low confidence result" }
     let inconclusiveHandler = fun (_: AnalysisResult) -> task { return "Inconclusive result" }
@@ -184,9 +184,9 @@ let ``Route with named tuple accepts Task functions via SRTP``() =
     let routingWorkflow = workflow {
         step analyze
         route (function
-            | HighConfidence _ -> "High", highHandler
-            | LowConfidence _ -> "Low", lowHandler
-            | Inconclusive -> "Inconclusive", inconclusiveHandler)
+            | HighConfidence _ -> highHandler
+            | LowConfidence _ -> lowHandler
+            | Inconclusive -> inconclusiveHandler)
     }
 
     // Act & Assert

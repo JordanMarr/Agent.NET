@@ -3,81 +3,6 @@ namespace AgentNet
 open System
 open System.Threading.Tasks
 
-/// Context passed to executors during workflow execution
-type WorkflowContext = {
-    /// Unique identifier for this workflow run
-    RunId: Guid
-    /// Shared state dictionary for passing data between executors
-    State: Map<string, obj>
-}
-
-module WorkflowContext =
-    /// Creates a new empty workflow context
-    let create () = {
-        RunId = Guid.NewGuid()
-        State = Map.empty
-    }
-
-    /// Gets a typed value from the context state
-    let tryGet<'T> (key: string) (ctx: WorkflowContext) : 'T option =
-        ctx.State
-        |> Map.tryFind key
-        |> Option.bind (fun v ->
-            match v with
-            | :? 'T as typed -> Some typed
-            | _ -> None)
-
-    /// Sets a value in the context state
-    let set (key: string) (value: obj) (ctx: WorkflowContext) : WorkflowContext =
-        { ctx with State = ctx.State |> Map.add key value }
-
-
-/// An executor that transforms input to output within a workflow
-type Executor<'input, 'output> = {
-    Name: string
-    Execute: 'input -> WorkflowContext -> Task<'output>
-}
-
-/// Module for creating executors
-[<RequireQualifiedAccess>]
-module Executor =
-
-    /// Creates an executor from a simple function
-    let fromFn (name: string) (fn: 'input -> 'output) : Executor<'input, 'output> =
-        {
-            Name = name
-            Execute = fun input _ -> task { return fn input }
-        }
-
-    /// Creates an executor from a Task function (C#-friendly)
-    let fromTask (name: string) (fn: 'input -> Task<'output>) : Executor<'input, 'output> =
-        {
-            Name = name
-            Execute = fun input _ -> fn input
-        }
-
-    /// Creates an executor from an F# Async function
-    let fromAsync (name: string) (fn: 'input -> Async<'output>) : Executor<'input, 'output> =
-        {
-            Name = name
-            Execute = fun input _ -> fn input |> Async.StartAsTask
-        }
-
-    /// Creates an executor from a function that takes context
-    let create (name: string) (fn: 'input -> WorkflowContext -> Task<'output>) : Executor<'input, 'output> =
-        {
-            Name = name
-            Execute = fn
-        }
-
-    /// Creates a typed executor from a TypedAgent
-    let fromTypedAgent (name: string) (agent: TypedAgent<'input, 'output>) : Executor<'input, 'output> =
-        {
-            Name = name
-            Execute = fun input _ -> TypedAgent.invoke input agent
-        }
-
-
 /// Backoff strategy for retries
 type BackoffStrategy =
     | Immediate
@@ -135,34 +60,9 @@ type StepConv = StepConv with
     static member inline ToStep(_: StepConv, wf: WorkflowDef<'i, 'o>) : Step<'i, 'o> = NestedWorkflow wf
 
 
-/// SRTP witness type for converting route returns to (name, Executor).
-/// Handles both direct Executor and named tuples with various Step types.
-type RouteConv = RouteConv with
-    // Direct Executor - uses Executor.Name
-    static member inline ToRoute(_: RouteConv, exec: Executor<'i, 'o>) : string * Executor<'i, 'o> =
-        (exec.Name, exec)
-
-    // Named tuple with Executor
-    static member inline ToRoute(_: RouteConv, (name: string, exec: Executor<'i, 'o>)) : string * Executor<'i, 'o> =
-        (name, exec)
-
-    // Named tuple with Task fn
-    static member inline ToRoute(_: RouteConv, (name: string, fn: 'i -> Task<'o>)) : string * Executor<'i, 'o> =
-        (name, Executor.fromTask name fn)
-
-    // Named tuple with Async fn
-    static member inline ToRoute(_: RouteConv, (name: string, fn: 'i -> Async<'o>)) : string * Executor<'i, 'o> =
-        (name, Executor.fromAsync name fn)
-
-    // Named tuple with TypedAgent
-    static member inline ToRoute(_: RouteConv, (name: string, agent: TypedAgent<'i, 'o>)) : string * Executor<'i, 'o> =
-        (name, Executor.fromTypedAgent name agent)
-
-
 /// Internal state carrier that threads type information through the builder
 type WorkflowState<'input, 'output> = {
     Steps: WorkflowStep list
-    StepCount: int
 }
 
 
@@ -172,6 +72,28 @@ module WorkflowInternal =
 
     /// Forward reference to executeInnerStep (set by Workflow module after it's defined)
     let mutable internal executeWorkflowStepRef: (WorkflowStep -> obj -> WorkflowContext -> Task<obj>) option = None
+
+    /// Generates a stable durable ID from a Step (always auto-generated, never from Executor.Name)
+    let getDurableId<'i, 'o> (step: Step<'i, 'o>) : string =
+        match step with
+        | TaskStep fn -> DurableId.forStep fn
+        | AsyncStep fn -> DurableId.forStep fn
+        | AgentStep agent -> DurableId.forAgent agent
+        | ExecutorStep exec -> DurableId.forExecutor exec
+        | NestedWorkflow _ -> DurableId.forWorkflow<'i, 'o> ()
+
+    /// Gets the display name for a Step (Executor.Name if available, otherwise uses durable ID)
+    let getDisplayName<'i, 'o> (step: Step<'i, 'o>) : string =
+        match step with
+        | ExecutorStep exec -> exec.Name  // Use explicit display name from Executor
+        | _ -> getDurableId step  // Otherwise, display name = durable ID
+
+    /// Checks if a Step uses a lambda and logs a warning
+    let warnIfLambda<'i, 'o> (step: Step<'i, 'o>) (id: string) : unit =
+        match step with
+        | TaskStep fn -> DurableId.warnIfLambda fn id
+        | AsyncStep fn -> DurableId.warnIfLambda fn id
+        | _ -> ()
 
     /// Converts a Step<'i, 'o> to an Executor<'i, 'o>
     /// Note: NestedWorkflow is handled separately in wrapStep
@@ -205,24 +127,14 @@ module WorkflowInternal =
             })
 
     /// Wraps a list of Steps as parallel execution (supports mixed types!)
+    /// Uses auto-generated durable IDs for each parallel branch
     let wrapStepParallel<'i, 'o> (steps: Step<'i, 'o> list) : WorkflowStep =
         let wrappedFns =
             steps
             |> List.mapi (fun i step ->
-                let exec = stepToExecutor $"Parallel {i+1}" step
-                fun (input: obj) (ctx: WorkflowContext) -> task {
-                    let typedInput = input :?> 'i
-                    let! result = exec.Execute typedInput ctx
-                    return result :> obj
-                })
-        Parallel wrappedFns
-
-    /// Wraps a list of Steps as parallel execution with a name prefix
-    let wrapStepParallelNamed<'i, 'o> (namePrefix: string) (steps: Step<'i, 'o> list) : WorkflowStep =
-        let wrappedFns =
-            steps
-            |> List.mapi (fun i step ->
-                let exec = stepToExecutor $"{namePrefix} {i+1}" step
+                let displayName = getDisplayName step
+                let exec = stepToExecutor displayName step
+                warnIfLambda step (getDurableId step)
                 fun (input: obj) (ctx: WorkflowContext) -> task {
                     let typedInput = input :?> 'i
                     let! result = exec.Execute typedInput ctx
@@ -263,16 +175,6 @@ module WorkflowInternal =
         Route (fun input ctx -> task {
             let typedInput = input :?> 'a
             let selectedExecutor = router typedInput
-            let! result = selectedExecutor.Execute typedInput ctx
-            return result :> obj
-        })
-
-    /// Wraps a typed router function that returns a named tuple (branchName, executor)
-    /// The router takes input and returns the branch name + executor to run on that same input
-    let wrapRouterNamed<'a, 'b> (router: 'a -> string * Executor<'a, 'b>) : WorkflowStep =
-        Route (fun input ctx -> task {
-            let typedInput = input :?> 'a
-            let (_branchName, selectedExecutor) = router typedInput
             let! result = selectedExecutor.Execute typedInput ctx
             return result :> obj
         })
@@ -318,63 +220,55 @@ module WorkflowInternal =
 /// Builder for the workflow computation expression
 type WorkflowBuilder() =
 
-    member _.Yield(_) : WorkflowState<'a, 'a> = { Steps = []; StepCount = 0 }
+    member _.Yield(_) : WorkflowState<'a, 'a> = { Steps = [] }
 
     // ============ STEP OPERATIONS ============
     // Uses inline SRTP to accept Task fn, Async fn, TypedAgent, Executor, Workflow, or Step directly
-    // Two overloads: one for first step (establishes types), one for subsequent (threads input type)
+    // Durable IDs are auto-generated; display names come from Executor.Name if available
 
     /// Adds first step - establishes workflow input/output types (uses SRTP for type resolution)
     [<CustomOperation("step")>]
     member inline _.StepFirst(state: WorkflowState<_, _>, x: ^T) : WorkflowState<'i, 'o> =
         let step : Step<'i, 'o> = ((^T or StepConv) : (static member ToStep: StepConv * ^T -> Step<'i, 'o>) (StepConv, x))
-        let name = $"Step {state.StepCount + 1}"
-        { Steps = state.Steps @ [WorkflowInternal.wrapStep name step]; StepCount = state.StepCount + 1 }
-
-    /// Adds first step with name - establishes workflow input/output types
-    [<CustomOperation("step")>]
-    member inline _.StepFirst(state: WorkflowState<_, _>, name: string, x: ^T) : WorkflowState<'i, 'o> =
-        let step : Step<'i, 'o> = ((^T or StepConv) : (static member ToStep: StepConv * ^T -> Step<'i, 'o>) (StepConv, x))
-        { Steps = state.Steps @ [WorkflowInternal.wrapStep name step]; StepCount = state.StepCount + 1 }
+        let displayName = WorkflowInternal.getDisplayName step
+        WorkflowInternal.warnIfLambda step (WorkflowInternal.getDurableId step)
+        { Steps = state.Steps @ [WorkflowInternal.wrapStep displayName step] }
 
     /// Adds subsequent step - threads input type through (uses SRTP for type resolution)
     [<CustomOperation("step")>]
     member inline _.Step(state: WorkflowState<'input, 'middle>, x: ^T) : WorkflowState<'input, 'output> =
         let step : Step<'middle, 'output> = ((^T or StepConv) : (static member ToStep: StepConv * ^T -> Step<'middle, 'output>) (StepConv, x))
-        let name = $"Step {state.StepCount + 1}"
-        { Steps = state.Steps @ [WorkflowInternal.wrapStep name step]; StepCount = state.StepCount + 1 }
-
-    /// Adds subsequent step with name - threads input type through
-    [<CustomOperation("step")>]
-    member inline _.Step(state: WorkflowState<'input, 'middle>, name: string, x: ^T) : WorkflowState<'input, 'output> =
-        let step : Step<'middle, 'output> = ((^T or StepConv) : (static member ToStep: StepConv * ^T -> Step<'middle, 'output>) (StepConv, x))
-        { Steps = state.Steps @ [WorkflowInternal.wrapStep name step]; StepCount = state.StepCount + 1 }
+        let displayName = WorkflowInternal.getDisplayName step
+        WorkflowInternal.warnIfLambda step (WorkflowInternal.getDurableId step)
+        { Steps = state.Steps @ [WorkflowInternal.wrapStep displayName step] }
 
     // ============ ROUTING ============
 
     /// Routes to different executors based on the previous step's output.
-    /// Accepts either:
-    ///   - Direct Executor: route (function | CaseA -> exec1 | CaseB -> exec2)
-    ///   - Named tuple with any Step type: route (function | CaseA -> "BranchA", handler1 | CaseB -> "BranchB", handler2)
+    /// Uses SRTP to accept Task fn, Async fn, TypedAgent, Executor, or Step directly.
+    /// Durable IDs are auto-generated for each branch.
     [<CustomOperation("route")>]
     member inline _.Route(state: WorkflowState<'input, 'middle>, router: 'middle -> ^T) : WorkflowState<'input, 'output> =
         let wrappedRouter = fun (input: 'middle) ->
             let result = router input
-            let (name, exec) : string * Executor<'middle, 'output> =
-                ((^T or RouteConv) : (static member ToRoute: RouteConv * ^T -> string * Executor<'middle, 'output>) (RouteConv, result))
-            (name, exec)
-        { Steps = state.Steps @ [WorkflowInternal.wrapRouterNamed wrappedRouter]; StepCount = state.StepCount + 1 }
+            let step : Step<'middle, 'output> =
+                ((^T or StepConv) : (static member ToStep: StepConv * ^T -> Step<'middle, 'output>) (StepConv, result))
+            let displayName = WorkflowInternal.getDisplayName step
+            WorkflowInternal.warnIfLambda step (WorkflowInternal.getDurableId step)
+            WorkflowInternal.stepToExecutor displayName step
+        { Steps = state.Steps @ [WorkflowInternal.wrapRouter wrappedRouter] }
 
     // ============ FANOUT OPERATIONS ============
     // SRTP overloads for 2-5 arguments - no wrapper needed!
-    // For 6+ branches, use: fanOut [s fn1; s fn2; ...]
+    // For 6+ branches, use: fanOut [+fn1; +fn2; ...]
+    // Durable IDs are auto-generated for each parallel branch
 
     /// Runs 2 steps in parallel (fan-out) - SRTP resolves each argument type
     [<CustomOperation("fanOut")>]
     member inline _.FanOut(state: WorkflowState<'input, 'middle>, x1: ^A, x2: ^B) : WorkflowState<'input, 'o list> =
         let s1 : Step<'middle, 'o> = ((^A or StepConv) : (static member ToStep: StepConv * ^A -> Step<'middle, 'o>) (StepConv, x1))
         let s2 : Step<'middle, 'o> = ((^B or StepConv) : (static member ToStep: StepConv * ^B -> Step<'middle, 'o>) (StepConv, x2))
-        { Steps = state.Steps @ [WorkflowInternal.wrapStepParallel [s1; s2]]; StepCount = state.StepCount + 1 }
+        { Steps = state.Steps @ [WorkflowInternal.wrapStepParallel [s1; s2]] }
 
     /// Runs 3 steps in parallel (fan-out) - SRTP resolves each argument type
     [<CustomOperation("fanOut")>]
@@ -382,7 +276,7 @@ type WorkflowBuilder() =
         let s1 : Step<'middle, 'o> = ((^A or StepConv) : (static member ToStep: StepConv * ^A -> Step<'middle, 'o>) (StepConv, x1))
         let s2 : Step<'middle, 'o> = ((^B or StepConv) : (static member ToStep: StepConv * ^B -> Step<'middle, 'o>) (StepConv, x2))
         let s3 : Step<'middle, 'o> = ((^C or StepConv) : (static member ToStep: StepConv * ^C -> Step<'middle, 'o>) (StepConv, x3))
-        { Steps = state.Steps @ [WorkflowInternal.wrapStepParallel [s1; s2; s3]]; StepCount = state.StepCount + 1 }
+        { Steps = state.Steps @ [WorkflowInternal.wrapStepParallel [s1; s2; s3]] }
 
     /// Runs 4 steps in parallel (fan-out) - SRTP resolves each argument type
     [<CustomOperation("fanOut")>]
@@ -391,7 +285,7 @@ type WorkflowBuilder() =
         let s2 : Step<'middle, 'o> = ((^B or StepConv) : (static member ToStep: StepConv * ^B -> Step<'middle, 'o>) (StepConv, x2))
         let s3 : Step<'middle, 'o> = ((^C or StepConv) : (static member ToStep: StepConv * ^C -> Step<'middle, 'o>) (StepConv, x3))
         let s4 : Step<'middle, 'o> = ((^D or StepConv) : (static member ToStep: StepConv * ^D -> Step<'middle, 'o>) (StepConv, x4))
-        { Steps = state.Steps @ [WorkflowInternal.wrapStepParallel [s1; s2; s3; s4]]; StepCount = state.StepCount + 1 }
+        { Steps = state.Steps @ [WorkflowInternal.wrapStepParallel [s1; s2; s3; s4]] }
 
     /// Runs 5 steps in parallel (fan-out) - SRTP resolves each argument type
     [<CustomOperation("fanOut")>]
@@ -401,64 +295,24 @@ type WorkflowBuilder() =
         let s3 : Step<'middle, 'o> = ((^C or StepConv) : (static member ToStep: StepConv * ^C -> Step<'middle, 'o>) (StepConv, x3))
         let s4 : Step<'middle, 'o> = ((^D or StepConv) : (static member ToStep: StepConv * ^D -> Step<'middle, 'o>) (StepConv, x4))
         let s5 : Step<'middle, 'o> = ((^E or StepConv) : (static member ToStep: StepConv * ^E -> Step<'middle, 'o>) (StepConv, x5))
-        { Steps = state.Steps @ [WorkflowInternal.wrapStepParallel [s1; s2; s3; s4; s5]]; StepCount = state.StepCount + 1 }
+        { Steps = state.Steps @ [WorkflowInternal.wrapStepParallel [s1; s2; s3; s4; s5]] }
 
     /// Runs multiple steps in parallel (fan-out) - for 6+ branches, use '+' operator
     [<CustomOperation("fanOut")>]
     member _.FanOut(state: WorkflowState<'input, 'middle>, steps: Step<'middle, 'o> list) : WorkflowState<'input, 'o list> =
-        { Steps = state.Steps @ [WorkflowInternal.wrapStepParallel steps]; StepCount = state.StepCount + 1 }
-
-    // Named fanOut overloads - name is used as prefix for parallel step names
-
-    /// Runs 2 named steps in parallel (fan-out)
-    [<CustomOperation("fanOut")>]
-    member inline _.FanOut(state: WorkflowState<'input, 'middle>, name: string, x1: ^A, x2: ^B) : WorkflowState<'input, 'o list> =
-        let s1 : Step<'middle, 'o> = ((^A or StepConv) : (static member ToStep: StepConv * ^A -> Step<'middle, 'o>) (StepConv, x1))
-        let s2 : Step<'middle, 'o> = ((^B or StepConv) : (static member ToStep: StepConv * ^B -> Step<'middle, 'o>) (StepConv, x2))
-        { Steps = state.Steps @ [WorkflowInternal.wrapStepParallelNamed name [s1; s2]]; StepCount = state.StepCount + 1 }
-
-    /// Runs 3 named steps in parallel (fan-out)
-    [<CustomOperation("fanOut")>]
-    member inline _.FanOut(state: WorkflowState<'input, 'middle>, name: string, x1: ^A, x2: ^B, x3: ^C) : WorkflowState<'input, 'o list> =
-        let s1 : Step<'middle, 'o> = ((^A or StepConv) : (static member ToStep: StepConv * ^A -> Step<'middle, 'o>) (StepConv, x1))
-        let s2 : Step<'middle, 'o> = ((^B or StepConv) : (static member ToStep: StepConv * ^B -> Step<'middle, 'o>) (StepConv, x2))
-        let s3 : Step<'middle, 'o> = ((^C or StepConv) : (static member ToStep: StepConv * ^C -> Step<'middle, 'o>) (StepConv, x3))
-        { Steps = state.Steps @ [WorkflowInternal.wrapStepParallelNamed name [s1; s2; s3]]; StepCount = state.StepCount + 1 }
-
-    /// Runs 4 named steps in parallel (fan-out)
-    [<CustomOperation("fanOut")>]
-    member inline _.FanOut(state: WorkflowState<'input, 'middle>, name: string, x1: ^A, x2: ^B, x3: ^C, x4: ^D) : WorkflowState<'input, 'o list> =
-        let s1 : Step<'middle, 'o> = ((^A or StepConv) : (static member ToStep: StepConv * ^A -> Step<'middle, 'o>) (StepConv, x1))
-        let s2 : Step<'middle, 'o> = ((^B or StepConv) : (static member ToStep: StepConv * ^B -> Step<'middle, 'o>) (StepConv, x2))
-        let s3 : Step<'middle, 'o> = ((^C or StepConv) : (static member ToStep: StepConv * ^C -> Step<'middle, 'o>) (StepConv, x3))
-        let s4 : Step<'middle, 'o> = ((^D or StepConv) : (static member ToStep: StepConv * ^D -> Step<'middle, 'o>) (StepConv, x4))
-        { Steps = state.Steps @ [WorkflowInternal.wrapStepParallelNamed name [s1; s2; s3; s4]]; StepCount = state.StepCount + 1 }
-
-    /// Runs 5 named steps in parallel (fan-out)
-    [<CustomOperation("fanOut")>]
-    member inline _.FanOut(state: WorkflowState<'input, 'middle>, name: string, x1: ^A, x2: ^B, x3: ^C, x4: ^D, x5: ^E) : WorkflowState<'input, 'o list> =
-        let s1 : Step<'middle, 'o> = ((^A or StepConv) : (static member ToStep: StepConv * ^A -> Step<'middle, 'o>) (StepConv, x1))
-        let s2 : Step<'middle, 'o> = ((^B or StepConv) : (static member ToStep: StepConv * ^B -> Step<'middle, 'o>) (StepConv, x2))
-        let s3 : Step<'middle, 'o> = ((^C or StepConv) : (static member ToStep: StepConv * ^C -> Step<'middle, 'o>) (StepConv, x3))
-        let s4 : Step<'middle, 'o> = ((^D or StepConv) : (static member ToStep: StepConv * ^D -> Step<'middle, 'o>) (StepConv, x4))
-        let s5 : Step<'middle, 'o> = ((^E or StepConv) : (static member ToStep: StepConv * ^E -> Step<'middle, 'o>) (StepConv, x5))
-        { Steps = state.Steps @ [WorkflowInternal.wrapStepParallelNamed name [s1; s2; s3; s4; s5]]; StepCount = state.StepCount + 1 }
+        { Steps = state.Steps @ [WorkflowInternal.wrapStepParallel steps] }
 
     // ============ FANIN OPERATIONS ============
     // Uses inline SRTP to accept Task fn, Async fn, TypedAgent, Executor, or Step directly
+    // Durable IDs are auto-generated
 
     /// Aggregates parallel results with any supported step type (uses SRTP for type resolution)
     [<CustomOperation("fanIn")>]
     member inline _.FanIn(state: WorkflowState<'input, 'elem list>, x: ^T) : WorkflowState<'input, 'output> =
         let step : Step<'elem list, 'output> = ((^T or StepConv) : (static member ToStep: StepConv * ^T -> Step<'elem list, 'output>) (StepConv, x))
-        let name = $"Step {state.StepCount + 1}"
-        { Steps = state.Steps @ [WorkflowInternal.wrapStepFanIn name step]; StepCount = state.StepCount + 1 }
-
-    /// Aggregates parallel results with a named step
-    [<CustomOperation("fanIn")>]
-    member inline _.FanIn(state: WorkflowState<'input, 'elem list>, name: string, x: ^T) : WorkflowState<'input, 'output> =
-        let step : Step<'elem list, 'output> = ((^T or StepConv) : (static member ToStep: StepConv * ^T -> Step<'elem list, 'output>) (StepConv, x))
-        { Steps = state.Steps @ [WorkflowInternal.wrapStepFanIn name step]; StepCount = state.StepCount + 1 }
+        let displayName = WorkflowInternal.getDisplayName step
+        WorkflowInternal.warnIfLambda step (WorkflowInternal.getDurableId step)
+        { Steps = state.Steps @ [WorkflowInternal.wrapStepFanIn displayName step] }
 
     // ============ RESILIENCE OPERATIONS ============
 
@@ -619,44 +473,9 @@ module Workflow =
 
     // ============ MAF COMPILATION ============
 
-    /// Checks if a step name is auto-generated (not explicitly set)
-    let private isAutoGeneratedName (name: string) : bool =
-        // Match patterns like "Step 1", "Step 2", "Parallel 1", "FanIn 1", etc.
-        let patterns = [
-            @"^Step \d+$"
-            @"^Parallel \d+$"
-            @"^FanIn \d+$"
-        ]
-        patterns |> List.exists (fun pattern ->
-            System.Text.RegularExpressions.Regex.IsMatch(name, pattern))
-
-    /// Extracts step names from a WorkflowStep (recursively for Resilient)
-    let rec private getStepNames (step: WorkflowStep) : string list =
-        match step with
-        | Step (name, _) -> [name]
-        | Route _ -> []  // Route branches are named via RouteConv
-        | Parallel _ -> []  // Parallel branches use indexed names
-        | Resilient (_, inner) -> getStepNames inner
-
-    /// Validates that all steps have explicit names (not auto-generated)
-    let private validateStepNames (workflow: WorkflowDef<'input, 'output>) : Result<unit, string list> =
-        let allNames = workflow.Steps |> List.collect getStepNames
-        let autoGeneratedNames = allNames |> List.filter isAutoGeneratedName
-        
-        if List.isEmpty autoGeneratedNames 
-        then Ok ()
-        else Error autoGeneratedNames
-
     /// Compiles a workflow to MAF durable graph format.
-    /// Fails if any step uses an auto-generated name (e.g., "Step 1").
-    /// MAF requires explicit, stable step names for durable checkpointing.
-    let toMAF<'input, 'output> (workflowId: string) (workflow: WorkflowDef<'input, 'output>) =
-        // Validate step names
-        match validateStepNames workflow with
-        | Error autoNames ->
-            let nameList = autoNames |> String.concat ", "
-            failwith $"MAF compilation failed: The following steps use auto-generated names which are not stable for durable execution: [{nameList}]. Use explicit names like: step \"MyStepName\" handler"
-        | Ok () ->
-            // TODO: Implement MAF graph compilation
-            // For now, just return a placeholder indicating validation passed
-            failwith $"MAF compilation not yet implemented for workflow '{workflowId}'. Step name validation passed."
+    /// All steps have auto-generated stable durable IDs - no validation needed.
+    let toMAF<'input, 'output> (workflowId: string) (_workflow: WorkflowDef<'input, 'output>) =
+        // TODO: Implement MAF graph compilation
+        // All steps now have stable durable IDs auto-generated from their MethodInfo
+        failwith $"MAF compilation not yet implemented for workflow '{workflowId}'."

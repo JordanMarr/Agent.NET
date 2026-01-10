@@ -42,9 +42,9 @@ let ``Simple sequential workflow executes in order``() =
 
     // Build the workflow using the DSL
     let myWorkflow = workflow {
-        step "Researcher" researcher
-        step "Analyzer" analyzer
-        step "Writer" writer
+        step researcher
+        step analyzer
+        step writer
     }
 
     // Act: Run the workflow
@@ -107,9 +107,9 @@ let ``Workflow output type is correctly inferred from last step``() =
     let isSignificant (count: int) = count > 2 |> Task.fromResult
 
     let myWorkflow = workflow {
-        step "ParseInput" parseInput
-        step "CountKeywords" countKeywords
-        step "IsSignificant" isSignificant
+        step parseInput
+        step countKeywords
+        step isSignificant
     }
 
     // This compiles without explicit type annotation, proving type inference works
@@ -224,41 +224,21 @@ let ``Mixed Task.fromResult and async functions in workflow``() =
     // Assert
     result =! "Word count: 5"
 
-// ============ toMAF validation tests ============
+// ============ toMAF tests ============
 
 [<Test>]
-let ``toMAF fails when steps use auto-generated names``() =
-    // Arrange: Workflow with auto-generated names
+let ``toMAF throws not yet implemented``() =
+    // Arrange: Workflow with auto-generated durable IDs
     let step1 (s: string) = s.Length |> Task.fromResult
     let step2 (n: int) = $"Result: {n}" |> Task.fromResult
 
     let wf = workflow {
-        step step1  // Will get "Step 1"
-        step step2  // Will get "Step 2"
+        step step1
+        step step2
     }
 
-    // Act & Assert: Should fail with descriptive error
+    // Act & Assert: Should throw "not yet implemented"
     let ex = Assert.Throws<System.Exception>(fun () ->
         Workflow.toMAF "test-workflow" wf |> ignore)
 
-    Assert.That(ex.Message, Does.Contain("Step 1"))
-    Assert.That(ex.Message, Does.Contain("auto-generated names"))
-
-[<Test>]
-let ``toMAF passes validation when all steps have explicit names``() =
-    // Arrange: Workflow with explicit names
-    let step1 (s: string) = s.Length |> Task.fromResult
-    let step2 (n: int) = $"Result: {n}" |> Task.fromResult
-
-    let wf = workflow {
-        step "ParseInput" step1
-        step "FormatOutput" step2
-    }
-
-    // Act & Assert: Should pass validation (but fail on "not implemented")
-    let ex = Assert.Throws<System.Exception>(fun () ->
-        Workflow.toMAF "test-workflow" wf |> ignore)
-
-    // Should NOT mention auto-generated names - validation passed
     Assert.That(ex.Message, Does.Contain("not yet implemented"))
-    Assert.That(ex.Message, Does.Contain("validation passed"))
