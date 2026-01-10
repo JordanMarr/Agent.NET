@@ -13,6 +13,8 @@ Project("{F2A71F9B-5D33-465A-A702-920D77279786}") = "AgentNet.Tests", "AgentNet.
 EndProject
 Project("{F2A71F9B-5D33-465A-A702-920D77279786}") = "AgentNet.Durable", "AgentNet.Durable\AgentNet.Durable.fsproj", "{77588234-FD60-4071-9362-89B447D2A5E7}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AgentNet.Durable.Interop", "AgentNet.Durable.Interop\AgentNet.Durable.Interop.csproj", "{3EC4FF59-596B-46A3-AB84-F952B4A664A1}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -83,6 +85,18 @@ Global
 		{77588234-FD60-4071-9362-89B447D2A5E7}.Release|x64.Build.0 = Release|Any CPU
 		{77588234-FD60-4071-9362-89B447D2A5E7}.Release|x86.ActiveCfg = Release|Any CPU
 		{77588234-FD60-4071-9362-89B447D2A5E7}.Release|x86.Build.0 = Release|Any CPU
+		{3EC4FF59-596B-46A3-AB84-F952B4A664A1}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{3EC4FF59-596B-46A3-AB84-F952B4A664A1}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{3EC4FF59-596B-46A3-AB84-F952B4A664A1}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{3EC4FF59-596B-46A3-AB84-F952B4A664A1}.Debug|x64.Build.0 = Debug|Any CPU
+		{3EC4FF59-596B-46A3-AB84-F952B4A664A1}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{3EC4FF59-596B-46A3-AB84-F952B4A664A1}.Debug|x86.Build.0 = Debug|Any CPU
+		{3EC4FF59-596B-46A3-AB84-F952B4A664A1}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{3EC4FF59-596B-46A3-AB84-F952B4A664A1}.Release|Any CPU.Build.0 = Release|Any CPU
+		{3EC4FF59-596B-46A3-AB84-F952B4A664A1}.Release|x64.ActiveCfg = Release|Any CPU
+		{3EC4FF59-596B-46A3-AB84-F952B4A664A1}.Release|x64.Build.0 = Release|Any CPU
+		{3EC4FF59-596B-46A3-AB84-F952B4A664A1}.Release|x86.ActiveCfg = Release|Any CPU
+		{3EC4FF59-596B-46A3-AB84-F952B4A664A1}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

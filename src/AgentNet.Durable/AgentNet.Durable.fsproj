@@ -25,6 +25,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\AgentNet\AgentNet.fsproj" />
+    <ProjectReference Include="..\AgentNet.Durable.Interop\AgentNet.Durable.Interop.csproj" />
   </ItemGroup>
 
   <ItemGroup>

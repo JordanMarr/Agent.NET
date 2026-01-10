@@ -44,6 +44,8 @@ type Step<'i, 'o> =
 
 /// A workflow definition that can be executed
 and WorkflowDef<'input, 'output> = {
+    /// Optional name for the workflow (required for MAF compilation)
+    Name: string option
     /// The steps in the workflow, in order
     Steps: WorkflowStep list
 }
@@ -356,7 +358,7 @@ type WorkflowBuilder() =
 
     /// Builds the final workflow definition
     member _.Run(state: WorkflowState<'input, 'output>) : WorkflowDef<'input, 'output> =
-        { Steps = state.Steps }
+        { Name = None; Steps = state.Steps }
 
 
 module Task = 
@@ -483,6 +485,10 @@ module Workflow =
             Name = name
             Execute = fun input ctx -> runWithContext input ctx workflow
         }
+
+    /// Sets the name of a workflow (required for MAF compilation)
+    let withName<'input, 'output> (name: string) (workflow: WorkflowDef<'input, 'output>) : WorkflowDef<'input, 'output> =
+        { workflow with Name = Some name }
 
     // ============ MAF COMPILATION ============
     // Note: toMAF is available in the AgentNet.Durable package
