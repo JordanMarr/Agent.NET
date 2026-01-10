@@ -5,19 +5,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
-  </PropertyGroup>
-
-  <!-- NuGet Package Metadata -->
-  <PropertyGroup>
-    <PackageId>AgentNet.Durable.Interop</PackageId>
-    <Version>1.0.0-alpha.1</Version>
-    <Authors>Jordan Marr</Authors>
-    <Description>C# interop layer for AgentNet.Durable. Provides MAF Executor wrappers that can be called from F#.</Description>
-    <PackageTags>fsharp;ai;agents;durable;interop</PackageTags>
-    <PackageLicenseExpression>MIT</PackageLicenseExpression>
-    <PackageProjectUrl>https://github.com/JordanMarr/Agent.NET</PackageProjectUrl>
-    <RepositoryUrl>https://github.com/JordanMarr/Agent.NET</RepositoryUrl>
-    <RepositoryType>git</RepositoryType>
+    <IsPackable>false</IsPackable>
   </PropertyGroup>
 
   <ItemGroup>
