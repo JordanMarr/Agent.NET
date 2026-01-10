@@ -88,7 +88,7 @@ let private createTypedAnalysisAgent (agent: ChatAgent) =
     TypedAgent.create formatStockPair parseAnalysisResult agent    
 
 /// Generates a formatted report
-let private generateReport (result: AnalysisResult) : string =
+let private generateReport (result: AnalysisResult) : Task<string> =
     $"""
 ================================================================================
                         STOCK COMPARISON REPORT
@@ -108,6 +108,7 @@ let private generateReport (result: AnalysisResult) : string =
 {result.Analysis}
 ================================================================================
 """
+    |> Task.FromResult
 
 // ----------------------------------------------------------------------------
 // Public Entry Point
@@ -123,9 +124,9 @@ let run (symbol1: string) (symbol2: string) : Task<unit> = task {
     let typedAgent = createTypedAnalysisAgent chatAgent
 
     let wf = workflow {
-        start (Executor.fromTask "FetchBothStocks" fetchBothStocks)
-        next (Executor.fromTypedAgent "CompareStocks" typedAgent)
-        next (Executor.fromFn "GenerateReport" generateReport)
+        step fetchBothStocks
+        step typedAgent
+        step generateReport
     }
 
     printfn "Step 1: Fetching stock data in parallel..."
