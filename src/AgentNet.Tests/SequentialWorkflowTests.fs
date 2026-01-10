@@ -225,20 +225,4 @@ let ``Mixed Task_fromResult and async functions in workflow``() =
     result =! "Word count: 5"
 
 // ============ toMAF tests ============
-
-[<Test>]
-let ``toMAF throws not yet implemented``() =
-    // Arrange: Workflow with auto-generated durable IDs
-    let step1 (s: string) = s.Length |> Task.fromResult
-    let step2 (n: int) = $"Result: {n}" |> Task.fromResult
-
-    let wf = workflow {
-        step step1
-        step step2
-    }
-
-    // Act & Assert: Should throw "not yet implemented"
-    let ex = Assert.Throws<System.Exception>(fun () ->
-        Workflow.toMAF "test-workflow" wf |> ignore)
-
-    Assert.That(ex.Message, Does.Contain("not yet implemented"))
+// Note: toMAF has moved to the AgentNet.Durable package (DurableWorkflow.toMAF)

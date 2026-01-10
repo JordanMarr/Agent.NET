@@ -485,10 +485,4 @@ module Workflow =
         }
 
     // ============ MAF COMPILATION ============
-
-    /// Compiles a workflow to MAF durable graph format.
-    /// All steps have auto-generated stable durable IDs - no validation needed.
-    let toMAF<'input, 'output> (workflowId: string) (_workflow: WorkflowDef<'input, 'output>) =
-        // TODO: Implement MAF graph compilation
-        // All steps now have stable durable IDs auto-generated from their MethodInfo
-        failwith $"MAF compilation not yet implemented for workflow '{workflowId}'."
+    // Note: toMAF is available in the AgentNet.Durable package
