@@ -187,7 +187,7 @@ let ``Workflow with type transformations through pipeline``() =
     result.LongestToken =! "quick"  // or "brown" or "jumps" - all 5 chars, maxBy returns first
 
 [<Test>]
-let ``Sync functions work with Task.fromResult wrapper``() =
+let ``Sync functions work with Task_fromResult wrapper``() =
     // Arrange: Sync functions using |> Task.fromResult pattern
     let parse (s: string) = s.Length |> Task.fromResult
     let double (n: int) = n * 2 |> Task.fromResult
@@ -206,7 +206,7 @@ let ``Sync functions work with Task.fromResult wrapper``() =
     result =! "Result: 10"
 
 [<Test>]
-let ``Mixed Task.fromResult and async functions in workflow``() =
+let ``Mixed Task_fromResult and async functions in workflow``() =
     // Arrange: Mix of Task.fromResult pattern and async functions
     let parseSync (s: string) = s.Split(' ') |> Array.toList |> Task.fromResult
     let fetchAsync (words: string list) = task { return words.Length }

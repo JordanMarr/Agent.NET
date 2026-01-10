@@ -91,7 +91,7 @@ let ``Result workflow short-circuits on first Error``() =
         Assert.Fail "Expected ValidationError"
 
 [<Test>]
-let ``ResultExecutor.map wraps return value in Ok``() =
+let ``ResultExecutor_map wraps return value in Ok``() =
     // Arrange
     let doubler = ResultExecutor.map "Doubler" (fun (x: int) -> x * 2)
 
@@ -106,7 +106,7 @@ let ``ResultExecutor.map wraps return value in Ok``() =
     result =! (Ok 42)
 
 [<Test>]
-let ``ResultExecutor.bind passes Result through unchanged``() =
+let ``ResultExecutor_bind passes Result through unchanged``() =
     // Arrange: bind returns the Result directly
     let validator = ResultExecutor.bind "Validator" (fun (x: int) ->
         if x > 0 then Ok $"Valid: {x}"
@@ -128,7 +128,7 @@ let ``ResultExecutor.bind passes Result through unchanged``() =
     | _ -> Assert.Fail "Expected ParseError"
 
 [<Test>]
-let ``ResultExecutor.mapTask wraps task result in Ok``() =
+let ``ResultExecutor_mapTask wraps task result in Ok``() =
     // Arrange
     let taskFetcher = ResultExecutor.mapTask "TaskFetcher" (fun (id: string) -> task {
         do! Task.Delay 10  // Simulate async work
@@ -151,7 +151,7 @@ let ``ResultExecutor.mapTask wraps task result in Ok``() =
         Assert.Fail "Expected Ok result"
 
 [<Test>]
-let ``ResultExecutor.bindTask passes task Result through``() =
+let ``ResultExecutor_bindTask passes task Result through``() =
     // Arrange
     let taskValidator = ResultExecutor.bindTask "TaskValidator" (fun (doc: Document) -> task {
         do! Task.Delay 10

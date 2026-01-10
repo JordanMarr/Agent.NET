@@ -167,7 +167,7 @@ let ``FanOut with list syntax and + operator for 6+ branches``() =
     result =! 81
 
 [<Test>]
-let ``FanOut with list syntax, Task.fromResult and + operator for 6+ branches``() =
+let ``FanOut with list syntax, Task_fromResult and + operator for 6+ branches``() =
     // Arrange: 6 branches requires list syntax with step/+ operator
     let init = Executor.fromFn "Init" (fun (x: int) -> x)
 

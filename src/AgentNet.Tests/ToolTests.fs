@@ -30,23 +30,23 @@ let formatWithParamDocs (symbol: string) (price: decimal) (currency: string) : s
     $"{symbol}: {price} {currency}"
 
 [<Test>]
-let ``Tool.create extracts function name from quotation`` () =
+let ``Tool_create extracts function name from quotation`` () =
     let tool = Tool.create <@ greet @>
     tool.Name =! "greet"
 
 [<Test>]
-let ``Tool.create extracts MethodInfo from quotation`` () =
+let ``Tool_create extracts MethodInfo from quotation`` () =
     let tool = Tool.create <@ greet @>
     tool.MethodInfo.Name =! "greet"
 
 [<Test>]
-let ``Tool.create works with curried functions`` () =
+let ``Tool_create works with curried functions`` () =
     let tool = Tool.create <@ add @>
     tool.Name =! "add"
     tool.MethodInfo.GetParameters().Length =! 2
 
 [<Test>]
-let ``Tool.create works with three parameter functions`` () =
+let ``Tool_create works with three parameter functions`` () =
     let tool = Tool.create <@ formatPrice @>
     tool.Name =! "formatPrice"
     tool.MethodInfo.GetParameters().Length =! 3
@@ -58,34 +58,34 @@ let ``MethodInfo parameter names are preserved`` () =
     paramNames =! [| "symbol"; "price"; "currency" |]
 
 [<Test>]
-let ``Tool.describe sets description`` () =
+let ``Tool_describe sets description`` () =
     let tool =
         Tool.create <@ greet @>
         |> Tool.describe "Greets a person by name"
     tool.Description =! "Greets a person by name"
 
 [<Test>]
-let ``Tool.create sets empty description by default`` () =
+let ``Tool_create sets empty description by default`` () =
     let tool = Tool.create <@ greet @>
     tool.Description =! ""
 
 [<Test>]
-let ``Tool.createWithDocs extracts description from XML docs`` () =
+let ``Tool_createWithDocs extracts description from XML docs`` () =
     let tool = Tool.createWithDocs <@ greetWithDocs @>
     tool.Description =! "Sends a friendly greeting to the specified person"
 
 [<Test>]
-let ``Tool.createWithDocs works with curried functions`` () =
+let ``Tool_createWithDocs works with curried functions`` () =
     let tool = Tool.createWithDocs <@ addWithDocs @>
     tool.Description =! "Calculates the sum of two integers"
 
 [<Test>]
-let ``Tool.createWithDocs falls back to empty when no XML docs`` () =
+let ``Tool_createWithDocs falls back to empty when no XML docs`` () =
     let tool = Tool.createWithDocs <@ greet @>
     tool.Description =! ""
 
 [<Test>]
-let ``Tool.create populates Parameters with names and types`` () =
+let ``Tool_create populates Parameters with names and types`` () =
     let tool = Tool.create <@ formatPrice @>
     tool.Parameters.Length =! 3
     tool.Parameters[0].Name =! "symbol"
@@ -96,19 +96,19 @@ let ``Tool.create populates Parameters with names and types`` () =
     tool.Parameters[2].Type =! typeof<string>
 
 [<Test>]
-let ``Tool.create sets empty param descriptions by default`` () =
+let ``Tool_create sets empty param descriptions by default`` () =
     let tool = Tool.create <@ formatPrice @>
     tool.Parameters |> List.iter (fun p -> p.Description =! "")
 
 [<Test>]
-let ``Tool.createWithDocs extracts param descriptions from XML docs`` () =
+let ``Tool_createWithDocs extracts param descriptions from XML docs`` () =
     let tool = Tool.createWithDocs <@ formatWithParamDocs @>
     tool.Parameters[0].Description =! "The stock ticker symbol"
     tool.Parameters[1].Description =! "The current price"
     tool.Parameters[2].Description =! "The currency code (e.g., USD)"
 
 [<Test>]
-let ``Tool.createWithDocs falls back to empty param descriptions when not documented`` () =
+let ``Tool_createWithDocs falls back to empty param descriptions when not documented`` () =
     let tool = Tool.createWithDocs <@ greetWithDocs @>
     // greetWithDocs has no <param> tags, so description should be empty
     tool.Parameters[0].Description =! ""
