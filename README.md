@@ -123,7 +123,7 @@ let researchWorkflow = workflow {
     step writer
 }
 
-let result = Workflow.runSync "Research AI trends" researchWorkflow
+let! result = Workflow.runInProcess "Research AI trends" researchWorkflow
 ```
 
 ---
@@ -229,13 +229,13 @@ The real power is using `TypedAgent` as a strongly-typed step in a workflow:
 
 ```fsharp
 let comparisonWorkflow = workflow {
-    step "FetchStocks" fetchBothStocks        // Named step with Task function
-    step "AnalyzeStocks" typedAnalyst         // TypedAgent works directly
-    step "GenerateReport" generateReport      // Sync function (returns Task.fromResult)
+    step fetchBothStocks   // async/task function
+    step typedAnalyst      // TypedAgent works directly
+    step generateReport    // sync function (returns Task.fromResult)
 }
 
 let input = { Symbol1 = "AAPL"; Symbol2 = "MSFT" }
-let! report = Workflow.run input comparisonWorkflow
+let! report = Workflow.runInProcess input comparisonWorkflow
 ```
 
 The workflow is fully type-safe: the compiler ensures each step's output type matches the next step's input type. Steps can be named for debugging/logging, or unnamed for brevity.
@@ -363,7 +363,7 @@ let namedOuter = workflow {
 let result = Workflow.runSync "initial input" myWorkflow
 
 // Asynchronous
-let! result = Workflow.run "initial input" myWorkflow
+let! result = Workflow.runInProcess "initial input" myWorkflow
 ```
 
 <details>
@@ -398,7 +398,7 @@ let pipeline = workflow {
 }
 
 // Run in-memory for testing
-let! result = Workflow.run input pipeline
+let! result = Workflow.runInProcess input pipeline
 
 // Or compile to MAF for durability
 let mafWorkflow = Workflow.toMAF pipeline
@@ -576,8 +576,7 @@ TypedAgent.invoke: 'i -> TypedAgent<'i,'o> -> Task<'o>
 ### Workflow Functions
 
 ```fsharp
-Workflow.run: 'i -> WorkflowDef<'i,'o> -> Task<'o>
-Workflow.runSync: 'i -> WorkflowDef<'i,'o> -> 'o
+Workflow.runInProcess: 'i -> WorkflowDef<'i,'o> -> Task<'o>
 Workflow.toExecutor: WorkflowDef<'i,'o> -> Executor<'i,'o>
 ```
 
@@ -619,10 +618,10 @@ let stockAnalysis = workflow {
     step generateRecommendation
 }
 
-// In-memory execution (development, testing, or production with your own persistence)
-let! result = Workflow.run input stockAnalysis
+// In-memory execution (quick-running workflows)
+let! result = Workflow.runInProcess input stockAnalysis
 
-// MAF durable execution (production with automatic durability)
+// MAF durable execution (long-running, durable workflows)
 let mafWorkflow = Workflow.toMAF stockAnalysis
 ```
 
@@ -641,10 +640,10 @@ Agent.NET supports both execution models from a single workflow definition:
 
 | Mode | API | Description |
 |------|-----|-------------|
-| **In-memory** | `Workflow.run` | Direct execution with full control. Bring your own persistence - you manage state exactly how you want. |
-| **MAF Durable** | `Workflow.toMAF` | Compile to MAF's durable runtime (backed by Azure Durable Functions) with automatic checkpointing, replay, and fault tolerance. |
+| **In-memory** | `Workflow.runInProcess` | Used for short-lived workflows execut within the current process. |
+| **MAF Durable** | `Workflow.toMAF` | Compiles to MAF's durable runtime (backed by Azure Durable Functions) with automatic checkpointing, replay, and fault tolerance. |
 
-**Prefer explicit control?** Use `Workflow.run` and integrate with your own persistence layer - databases, queues, event stores, whatever fits your architecture.
+**Prefer explicit control?** Use `Workflow.runInProcess` and integrate with your own persistence layer - databases, queues, event stores, whatever fits your architecture.
 
 **Want durable orchestration?** Use `Workflow.toMAF` to get enterprise-grade durability with one line of code. You can still use `Workflow.run` for local testing without installing the durable runtime.
 
