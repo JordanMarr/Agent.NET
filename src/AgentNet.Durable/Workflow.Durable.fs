@@ -45,15 +45,13 @@ module DurableWorkflowExtensions =
 
             let durableId = $"AwaitEvent_{eventName}_{eventType.Name}"
 
-            // Pre-baked executor function - captures 'T at construction time
-            // No reflection needed at execution time
-            let exec = fun (ctxObj: obj) -> task {
+            // Produce the durable primitive directly - no awaiting, no wrapping
+            // This allows DurableTask to suspend/resume the orchestrator correctly
+            let invoke = fun (ctxObj: obj) ->
                 let ctx = ctxObj :?> TaskOrchestrationContext
-                let! result = ctx.WaitForExternalEvent<'T>(eventName)
-                return box result
-            }
+                ctx.WaitForExternalEvent<'T>(eventName) :> Task
 
-            { Name = state.Name; Steps = state.Steps @ [AwaitEvent(durableId, exec)] }
+            { Name = state.Name; Steps = state.Steps @ [AwaitEvent(durableId, invoke)] }
 
         /// Delays the workflow for the specified duration.
         /// The workflow is checkpointed and suspended during the delay.
@@ -159,11 +157,22 @@ module Workflow =
                 let parallelId = $"Parallel_{stepIndex}_" + (branches |> List.map fst |> String.concat "_")
                 ExecutorFactory.CreateParallel(parallelId, branchFns)
 
-            // Durable operations - call pre-baked executor (no reflection)
-            | AwaitEvent (durableId, exec) ->
+            // Durable operations - return the durable primitive directly (no awaiting)
+            | AwaitEvent (durableId, invoke) ->
                 let executorId = $"{durableId}_{stepIndex}"
-                // exec already captures the typed WaitForExternalEventAsync<'T> call
-                let fn = Func<obj, Task<obj>>(fun _ -> exec ctx)
+                // Return the durable primitive directly to DTFx - no wrapping, no awaiting
+                let fn = Func<obj, Task<obj>>(fun _ ->
+                    // invoke returns Task (the durable primitive)
+                    // We need to convert to Task<obj> for MAF, but without awaiting
+                    let durableTask = invoke ctx
+                    // Create a continuation that extracts the result after DTFx resumes
+                    durableTask.ContinueWith(fun (t: Task) ->
+                        // The original task is Task<'T>, get the result
+                        let resultProp = t.GetType().GetProperty("Result")
+                        if resultProp <> null then
+                            resultProp.GetValue(t)
+                        else
+                            null))
                 ExecutorFactory.CreateStep(executorId, fn)
 
             | Delay (durableId, duration) ->
@@ -278,33 +287,105 @@ module Workflow =
                 else
                     data :?> 'output
 
+        /// Executes a single workflow step within the durable orchestration context.
+        /// Uses DTFx primitives directly for durable operations.
+        let rec private executeStepDurable
+            (ctx: TaskOrchestrationContext)
+            (input: obj)
+            (step: WorkflowStep)
+            : Task<obj> =
+            match step with
+            | Step (_, _, execute) ->
+                // Regular step - execute directly (pure .NET function)
+                let workflowCtx = WorkflowContext.create()
+                execute input workflowCtx
+
+            | Route (_, router) ->
+                // Router - execute directly (pure .NET function)
+                let workflowCtx = WorkflowContext.create()
+                router input workflowCtx
+
+            | Parallel branches ->
+                // Execute branches in parallel
+                task {
+                    let tasks =
+                        branches
+                        |> List.map (fun (_, exec) ->
+                            let workflowCtx = WorkflowContext.create()
+                            exec input workflowCtx)
+                    let! results = Task.WhenAll(tasks)
+                    return (results |> Array.toList) :> obj
+                }
+
+            | AwaitEvent (_, invoke) ->
+                // Durable operation - return the primitive directly
+                // invoke returns Task<'T> (as Task), we need to get the result
+                task {
+                    let durableTask = invoke ctx
+                    do! durableTask
+                    // Extract the result from the completed Task<'T>
+                    let resultProp = durableTask.GetType().GetProperty("Result")
+                    return resultProp.GetValue(durableTask)
+                }
+
+            | Delay (_, duration) ->
+                // Durable timer
+                task {
+                    let fireAt = ctx.CurrentUtcDateTime.Add(duration)
+                    do! ctx.CreateTimer(fireAt, CancellationToken.None)
+                    return input  // Pass through unchanged
+                }
+
+            | WithRetry (inner, maxRetries) ->
+                let workflowCtx = WorkflowContext.create()
+                let rec retry attempt =
+                    task {
+                        try
+                            return! executeStep inner input workflowCtx
+                        with _ when attempt < maxRetries ->
+                            return! retry (attempt + 1)
+                    }
+                retry 0
+
+            | WithTimeout (inner, timeout) ->
+                task {
+                    let fireAt = ctx.CurrentUtcDateTime.Add(timeout)
+                    let timerTask = ctx.CreateTimer(fireAt, CancellationToken.None)
+                    let workflowCtx = WorkflowContext.create()
+                    let stepTask = executeStep inner input workflowCtx
+                    let! winner = Task.WhenAny(stepTask, timerTask)
+                    if obj.ReferenceEquals(winner, timerTask) then
+                        return raise (TimeoutException($"Step timed out after {timeout}"))
+                    else
+                        return! stepTask
+                }
+
+            | WithFallback (inner, _, fallback) ->
+                task {
+                    let workflowCtx = WorkflowContext.create()
+                    try
+                        return! executeStep inner input workflowCtx
+                    with _ ->
+                        return! fallback input workflowCtx
+                }
+
         /// Runs a workflow within a durable orchestration context.
         /// Call this from your [<OrchestrationTrigger>] function.
-        /// Compiles to MAF, then executes via MAF InProcessExecution.
+        /// Executes steps directly using DTFx primitives for durable operations.
         let run<'input, 'output>
             (ctx: TaskOrchestrationContext)
             (input: 'input)
             (workflow: WorkflowDef<'input, 'output>)
             : Task<'output> =
             task {
-                // Compile to MAF workflow with durable context
-                let mafWorkflow = toMAF ctx workflow
+                // Execute steps sequentially, threading output to input
+                let mutable current: obj = input :> obj
 
-                // Run via InProcessExecution
-                let! execution = MAFInProcessExecution.RunAsync(mafWorkflow, input :> obj)
-                use _ = execution
+                for step in workflow.Steps do
+                    let! result = executeStepDurable ctx current step
+                    current <- result
 
-                // Find the last ExecutorCompletedEvent - it should be the workflow output
-                let mutable lastResult: obj option = None
-                for evt in execution.NewEvents do
-                    match evt with
-                    | :? MAFExecutorCompletedEvent as completed ->
-                        lastResult <- Some completed.Data
-                    | _ -> ()
-
-                match lastResult with
-                | Some data -> return convertToOutput<'output> data
-                | None -> return failwith "Workflow did not produce output. No ExecutorCompletedEvent found."
+                return current :?> 'output
             }
 
 
