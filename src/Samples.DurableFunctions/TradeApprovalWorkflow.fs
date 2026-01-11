@@ -94,12 +94,12 @@ let executeTrade (decision: ApprovalDecision) : Task<TradeResult> = task {
 /// 4. Executes or cancels based on decision
 let tradeApprovalWorkflow =
     workflow {
+        name "TradeApprovalWorkflow"
         step analyzeStock
         step sendForApproval
         awaitEvent "TradeApproval" eventOf<ApprovalDecision>
         step executeTrade
     }
-    |> Workflow.withName "TradeApprovalWorkflow"
 
 // ============================================================================
 // AZURE FUNCTION - Just the orchestrator, that's it!

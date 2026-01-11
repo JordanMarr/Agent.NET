@@ -57,6 +57,7 @@ type StepConv = StepConv with
 
 /// Internal state carrier that threads type information through the builder
 type WorkflowState<'input, 'output> = {
+    Name: string option
     Steps: WorkflowStep list
 }
 
@@ -252,7 +253,12 @@ module WorkflowInternal =
 /// Builder for the workflow computation expression
 type WorkflowBuilder() =
 
-    member _.Yield(_) : WorkflowState<'a, 'a> = { Steps = [] }
+    member _.Yield(_) : WorkflowState<'a, 'a> = { Name = None; Steps = [] }
+
+    /// Sets the name of the workflow (used for MAF compilation and durable function registration)
+    [<CustomOperation("name")>]
+    member _.Name(state: WorkflowState<'input, 'output>, name: string) : WorkflowState<'input, 'output> =
+        { state with Name = Some name }
 
     // ============ STEP OPERATIONS ============
     // Uses inline SRTP to accept Task fn, Async fn, TypedAgent, Executor, Workflow, or Step directly
@@ -265,7 +271,7 @@ type WorkflowBuilder() =
         let durableId = WorkflowInternal.getDurableId step
         let displayName = WorkflowInternal.getDisplayName step
         WorkflowInternal.warnIfLambda step durableId
-        { Steps = state.Steps @ [WorkflowInternal.wrapStep durableId displayName step] }
+        { Name = state.Name; Steps = state.Steps @ [WorkflowInternal.wrapStep durableId displayName step] }
 
     /// Adds subsequent step - threads input type through (uses SRTP for type resolution)
     [<CustomOperation("step")>]
@@ -274,7 +280,7 @@ type WorkflowBuilder() =
         let durableId = WorkflowInternal.getDurableId step
         let displayName = WorkflowInternal.getDisplayName step
         WorkflowInternal.warnIfLambda step durableId
-        { Steps = state.Steps @ [WorkflowInternal.wrapStep durableId displayName step] }
+        { Name = state.Name; Steps = state.Steps @ [WorkflowInternal.wrapStep durableId displayName step] }
 
     // ============ ROUTING ============
 
@@ -292,7 +298,7 @@ type WorkflowBuilder() =
             let displayName = WorkflowInternal.getDisplayName step
             WorkflowInternal.warnIfLambda step (WorkflowInternal.getDurableId step)
             WorkflowInternal.stepToExecutor displayName step
-        { Steps = state.Steps @ [WorkflowInternal.wrapRouter routeDurableId wrappedRouter] }
+        { Name = state.Name; Steps = state.Steps @ [WorkflowInternal.wrapRouter routeDurableId wrappedRouter] }
 
     // ============ FANOUT OPERATIONS ============
     // SRTP overloads for 2-5 arguments - no wrapper needed!
@@ -304,7 +310,7 @@ type WorkflowBuilder() =
     member inline _.FanOut(state: WorkflowState<'input, 'middle>, x1: ^A, x2: ^B) : WorkflowState<'input, 'o list> =
         let s1 : Step<'middle, 'o> = ((^A or StepConv) : (static member ToStep: StepConv * ^A -> Step<'middle, 'o>) (StepConv, x1))
         let s2 : Step<'middle, 'o> = ((^B or StepConv) : (static member ToStep: StepConv * ^B -> Step<'middle, 'o>) (StepConv, x2))
-        { Steps = state.Steps @ [WorkflowInternal.wrapStepParallel [s1; s2]] }
+        { Name = state.Name; Steps = state.Steps @ [WorkflowInternal.wrapStepParallel [s1; s2]] }
 
     /// Runs 3 steps in parallel (fan-out) - SRTP resolves each argument type
     [<CustomOperation("fanOut")>]
@@ -312,7 +318,7 @@ type WorkflowBuilder() =
         let s1 : Step<'middle, 'o> = ((^A or StepConv) : (static member ToStep: StepConv * ^A -> Step<'middle, 'o>) (StepConv, x1))
         let s2 : Step<'middle, 'o> = ((^B or StepConv) : (static member ToStep: StepConv * ^B -> Step<'middle, 'o>) (StepConv, x2))
         let s3 : Step<'middle, 'o> = ((^C or StepConv) : (static member ToStep: StepConv * ^C -> Step<'middle, 'o>) (StepConv, x3))
-        { Steps = state.Steps @ [WorkflowInternal.wrapStepParallel [s1; s2; s3]] }
+        { Name = state.Name; Steps = state.Steps @ [WorkflowInternal.wrapStepParallel [s1; s2; s3]] }
 
     /// Runs 4 steps in parallel (fan-out) - SRTP resolves each argument type
     [<CustomOperation("fanOut")>]
@@ -321,7 +327,7 @@ type WorkflowBuilder() =
         let s2 : Step<'middle, 'o> = ((^B or StepConv) : (static member ToStep: StepConv * ^B -> Step<'middle, 'o>) (StepConv, x2))
         let s3 : Step<'middle, 'o> = ((^C or StepConv) : (static member ToStep: StepConv * ^C -> Step<'middle, 'o>) (StepConv, x3))
         let s4 : Step<'middle, 'o> = ((^D or StepConv) : (static member ToStep: StepConv * ^D -> Step<'middle, 'o>) (StepConv, x4))
-        { Steps = state.Steps @ [WorkflowInternal.wrapStepParallel [s1; s2; s3; s4]] }
+        { Name = state.Name; Steps = state.Steps @ [WorkflowInternal.wrapStepParallel [s1; s2; s3; s4]] }
 
     /// Runs 5 steps in parallel (fan-out) - SRTP resolves each argument type
     [<CustomOperation("fanOut")>]
@@ -331,12 +337,12 @@ type WorkflowBuilder() =
         let s3 : Step<'middle, 'o> = ((^C or StepConv) : (static member ToStep: StepConv * ^C -> Step<'middle, 'o>) (StepConv, x3))
         let s4 : Step<'middle, 'o> = ((^D or StepConv) : (static member ToStep: StepConv * ^D -> Step<'middle, 'o>) (StepConv, x4))
         let s5 : Step<'middle, 'o> = ((^E or StepConv) : (static member ToStep: StepConv * ^E -> Step<'middle, 'o>) (StepConv, x5))
-        { Steps = state.Steps @ [WorkflowInternal.wrapStepParallel [s1; s2; s3; s4; s5]] }
+        { Name = state.Name; Steps = state.Steps @ [WorkflowInternal.wrapStepParallel [s1; s2; s3; s4; s5]] }
 
     /// Runs multiple steps in parallel (fan-out) - for 6+ branches, use '+' operator
     [<CustomOperation("fanOut")>]
     member _.FanOut(state: WorkflowState<'input, 'middle>, steps: Step<'middle, 'o> list) : WorkflowState<'input, 'o list> =
-        { Steps = state.Steps @ [WorkflowInternal.wrapStepParallel steps] }
+        { Name = state.Name; Steps = state.Steps @ [WorkflowInternal.wrapStepParallel steps] }
 
     // ============ FANIN OPERATIONS ============
     // Uses inline SRTP to accept Task fn, Async fn, TypedAgent, Executor, or Step directly
@@ -349,7 +355,7 @@ type WorkflowBuilder() =
         let durableId = WorkflowInternal.getDurableId step
         let displayName = WorkflowInternal.getDisplayName step
         WorkflowInternal.warnIfLambda step durableId
-        { Steps = state.Steps @ [WorkflowInternal.wrapStepFanIn durableId displayName step] }
+        { Name = state.Name; Steps = state.Steps @ [WorkflowInternal.wrapStepFanIn durableId displayName step] }
 
     // ============ RESILIENCE OPERATIONS ============
     // These wrap the preceding step with retry, timeout, or fallback behavior
@@ -362,7 +368,7 @@ type WorkflowBuilder() =
         | steps ->
             let allButLast = steps |> List.take (steps.Length - 1)
             let last = steps |> List.last
-            { Steps = allButLast @ [WithRetry(last, maxRetries)] }
+            { Name = state.Name; Steps = allButLast @ [WithRetry(last, maxRetries)] }
 
     /// Wraps the previous step with a timeout. Fails with TimeoutException if duration exceeded.
     [<CustomOperation("timeout")>]
@@ -372,7 +378,7 @@ type WorkflowBuilder() =
         | steps ->
             let allButLast = steps |> List.take (steps.Length - 1)
             let last = steps |> List.last
-            { Steps = allButLast @ [WithTimeout(last, duration)] }
+            { Name = state.Name; Steps = allButLast @ [WithTimeout(last, duration)] }
 
     /// Wraps the previous step with a fallback. On failure, executes the fallback step instead.
     [<CustomOperation("fallback")>]
@@ -393,11 +399,11 @@ type WorkflowBuilder() =
         | steps ->
             let allButLast = steps |> List.take (steps.Length - 1)
             let last = steps |> List.last
-            { Steps = allButLast @ [WithFallback(last, durableId, fallbackExec)] }
+            { Name = state.Name; Steps = allButLast @ [WithFallback(last, durableId, fallbackExec)] }
 
     /// Builds the final workflow definition
     member _.Run(state: WorkflowState<'input, 'output>) : WorkflowDef<'input, 'output> =
-        { Name = None; Steps = state.Steps }
+        { Name = state.Name; Steps = state.Steps }
 
 
 module Task = 

@@ -25,7 +25,7 @@ module DurableWorkflowExtensions =
         [<CustomOperation("awaitEvent")>]
         member _.AwaitEvent(state: WorkflowState<'input, _>, eventName: string, _witness: 'T) : WorkflowState<'input, 'T> =
             let durableId = $"AwaitEvent_{eventName}_{typeof<'T>.Name}"
-            { Steps = state.Steps @ [AwaitEvent(durableId, eventName, typeof<'T>)] }
+            { Name = state.Name; Steps = state.Steps @ [AwaitEvent(durableId, eventName, typeof<'T>)] }
 
         /// Delays the workflow for the specified duration.
         /// The workflow is checkpointed and suspended during the delay.
@@ -33,7 +33,7 @@ module DurableWorkflowExtensions =
         [<CustomOperation("delayFor")>]
         member _.DelayFor(state: WorkflowState<'input, 'output>, duration: TimeSpan) : WorkflowState<'input, 'output> =
             let durableId = $"Delay_{int duration.TotalMilliseconds}ms"
-            { Steps = state.Steps @ [Delay(durableId, duration)] }
+            { Name = state.Name; Steps = state.Steps @ [Delay(durableId, duration)] }
 
 
 /// Functions for compiling and running durable workflows.
