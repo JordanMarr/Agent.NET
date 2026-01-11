@@ -27,11 +27,8 @@
     <ProjectReference Include="..\AgentNet\AgentNet.fsproj" />
   </ItemGroup>
 
-  <!-- Future: Add Microsoft.Agents.AI.DurableTask when implementing awaitEvent -->
-  <!--
   <ItemGroup>
-    <PackageReference Include="Microsoft.Agents.AI.DurableTask" Version="1.0.0-preview.*" />
+    <PackageReference Include="Microsoft.DurableTask.Abstractions" Version="1.*" />
   </ItemGroup>
-  -->
 
 </Project>
