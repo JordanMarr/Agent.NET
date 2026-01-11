@@ -44,9 +44,9 @@ let ``Route selects correct executor based on DU case``() =
     }
 
     // Act & Assert: Test each branch
-    (routingWorkflow |> Workflow.runInProcess "I am confident about this").GetAwaiter().GetResult() =! "Processed with high confidence"
-    (routingWorkflow |> Workflow.runInProcess "I am unsure about this").GetAwaiter().GetResult() =! "Processed with low confidence"
-    (routingWorkflow |> Workflow.runInProcess "No idea").GetAwaiter().GetResult() =! "Needs manual review"
+    (routingWorkflow |> Workflow.InProcess.run "I am confident about this").GetAwaiter().GetResult() =! "Processed with high confidence"
+    (routingWorkflow |> Workflow.InProcess.run "I am unsure about this").GetAwaiter().GetResult() =! "Processed with low confidence"
+    (routingWorkflow |> Workflow.InProcess.run "No idea").GetAwaiter().GetResult() =! "Needs manual review"
 
 [<Test>]
 let ``Route can extract data from DU cases``() =
@@ -74,9 +74,9 @@ let ``Route can extract data from DU cases``() =
     }
 
     // Act & Assert
-    (routingWorkflow |> Workflow.runInProcess 95).GetAwaiter().GetResult() =! "High: 0.95"
-    (routingWorkflow |> Workflow.runInProcess 65).GetAwaiter().GetResult() =! "Low: 0.65"
-    (routingWorkflow |> Workflow.runInProcess 30).GetAwaiter().GetResult() =! "Inconclusive: N/A"
+    (routingWorkflow |> Workflow.InProcess.run 95).GetAwaiter().GetResult() =! "High: 0.95"
+    (routingWorkflow |> Workflow.InProcess.run 65).GetAwaiter().GetResult() =! "Low: 0.65"
+    (routingWorkflow |> Workflow.InProcess.run 30).GetAwaiter().GetResult() =! "Inconclusive: N/A"
 
 [<Test>]
 let ``Route with category-based content handling``() =
@@ -103,13 +103,13 @@ let ``Route with category-based content handling``() =
     }
 
     // Act & Assert
-    let techResult = (routingWorkflow |> Workflow.runInProcess "New AI breakthrough").GetAwaiter().GetResult()
+    let techResult = (routingWorkflow |> Workflow.InProcess.run "New AI breakthrough").GetAwaiter().GetResult()
     techResult.Handler =! "TechDesk"
 
-    let financeResult = (routingWorkflow |> Workflow.runInProcess "Stock Market update").GetAwaiter().GetResult()
+    let financeResult = (routingWorkflow |> Workflow.InProcess.run "Stock Market update").GetAwaiter().GetResult()
     financeResult.Handler =! "FinanceDesk"
 
-    let generalResult = (routingWorkflow |> Workflow.runInProcess "Weather forecast").GetAwaiter().GetResult()
+    let generalResult = (routingWorkflow |> Workflow.InProcess.run "Weather forecast").GetAwaiter().GetResult()
     generalResult.Handler =! "GeneralDesk"
 
 [<Test>]
@@ -134,8 +134,8 @@ let ``Route followed by additional steps``() =
     }
 
     // Act & Assert
-    (routingWorkflow |> Workflow.runInProcess 5).GetAwaiter().GetResult() =! "Result: POSITIVE"
-    (routingWorkflow |> Workflow.runInProcess -3).GetAwaiter().GetResult() =! "Result: NEGATIVE"
+    (routingWorkflow |> Workflow.InProcess.run 5).GetAwaiter().GetResult() =! "Result: POSITIVE"
+    (routingWorkflow |> Workflow.InProcess.run -3).GetAwaiter().GetResult() =! "Result: NEGATIVE"
 
 // ============ Route with auto-generated durable IDs ============
 
@@ -164,9 +164,9 @@ let ``Route with Executor uses Executor name for display``() =
     }
 
     // Act & Assert
-    (routingWorkflow |> Workflow.runInProcess "I am confident about this").GetAwaiter().GetResult() =! "Processed with high confidence"
-    (routingWorkflow |> Workflow.runInProcess "I am unsure about this").GetAwaiter().GetResult() =! "Processed with low confidence"
-    (routingWorkflow |> Workflow.runInProcess "No idea").GetAwaiter().GetResult() =! "Needs manual review"
+    (routingWorkflow |> Workflow.InProcess.run "I am confident about this").GetAwaiter().GetResult() =! "Processed with high confidence"
+    (routingWorkflow |> Workflow.InProcess.run "I am unsure about this").GetAwaiter().GetResult() =! "Processed with low confidence"
+    (routingWorkflow |> Workflow.InProcess.run "No idea").GetAwaiter().GetResult() =! "Needs manual review"
 
 [<Test>]
 let ``Route accepts Task functions via SRTP with auto-generated IDs``() =
@@ -190,6 +190,6 @@ let ``Route accepts Task functions via SRTP with auto-generated IDs``() =
     }
 
     // Act & Assert
-    (routingWorkflow |> Workflow.runInProcess "I am confident about this").GetAwaiter().GetResult() =! "High confidence result"
-    (routingWorkflow |> Workflow.runInProcess "I am unsure about this").GetAwaiter().GetResult() =! "Low confidence result"
-    (routingWorkflow |> Workflow.runInProcess "No idea").GetAwaiter().GetResult() =! "Inconclusive result"
+    (routingWorkflow |> Workflow.InProcess.run "I am confident about this").GetAwaiter().GetResult() =! "High confidence result"
+    (routingWorkflow |> Workflow.InProcess.run "I am unsure about this").GetAwaiter().GetResult() =! "Low confidence result"
+    (routingWorkflow |> Workflow.InProcess.run "No idea").GetAwaiter().GetResult() =! "Inconclusive result"

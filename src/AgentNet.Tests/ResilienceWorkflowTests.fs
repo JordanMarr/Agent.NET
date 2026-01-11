@@ -23,7 +23,7 @@ let ``Retry succeeds after transient failure``() =
     }
 
     // Act
-    let result = (resilientWorkflow |> Workflow.runInProcess 5).GetAwaiter().GetResult()
+    let result = (resilientWorkflow |> Workflow.InProcess.run 5).GetAwaiter().GetResult()
 
     // Assert
     result =! 10
@@ -43,7 +43,7 @@ let ``Retry fails after max retries exceeded``() =
 
     // Act & Assert - workflow should fail (exception type depends on MAF error handling)
     Assert.Catch(fun () ->
-        (resilientWorkflow |> Workflow.runInProcess 5).GetAwaiter().GetResult() |> ignore) |> ignore
+        (resilientWorkflow |> Workflow.InProcess.run 5).GetAwaiter().GetResult() |> ignore) |> ignore
 
 [<Test>]
 let ``Timeout completes within duration``() =
@@ -60,7 +60,7 @@ let ``Timeout completes within duration``() =
     }
 
     // Act
-    let result = (timedWorkflow |> Workflow.runInProcess 5).GetAwaiter().GetResult()
+    let result = (timedWorkflow |> Workflow.InProcess.run 5).GetAwaiter().GetResult()
 
     // Assert
     result =! 10
@@ -81,7 +81,7 @@ let ``Timeout throws when duration exceeded``() =
 
     // Act & Assert - workflow should fail when timeout is exceeded
     Assert.Catch(fun () ->
-        (timedWorkflow |> Workflow.runInProcess 5).GetAwaiter().GetResult() |> ignore) |> ignore
+        (timedWorkflow |> Workflow.InProcess.run 5).GetAwaiter().GetResult() |> ignore) |> ignore
 
 [<Test>]
 let ``Fallback executes on failure``() =
@@ -99,7 +99,7 @@ let ``Fallback executes on failure``() =
     }
 
     // Act
-    let result = (resilientWorkflow |> Workflow.runInProcess 5).GetAwaiter().GetResult()
+    let result = (resilientWorkflow |> Workflow.InProcess.run 5).GetAwaiter().GetResult()
 
     // Assert
     result =! 50
@@ -119,7 +119,7 @@ let ``Fallback not executed when primary succeeds``() =
     }
 
     // Act
-    let result = (resilientWorkflow |> Workflow.runInProcess 5).GetAwaiter().GetResult()
+    let result = (resilientWorkflow |> Workflow.InProcess.run 5).GetAwaiter().GetResult()
 
     // Assert
     result =! 10
@@ -143,7 +143,7 @@ let ``Retry and fallback can be combined``() =
     }
 
     // Act
-    let result = (resilientWorkflow |> Workflow.runInProcess 5).GetAwaiter().GetResult()
+    let result = (resilientWorkflow |> Workflow.InProcess.run 5).GetAwaiter().GetResult()
 
     // Assert
     result =! 500  // Fallback was used after all retries failed
@@ -164,7 +164,7 @@ let ``Resilience operations work with named executors``() =
     }
 
     // Act
-    let result = (resilientWorkflow |> Workflow.runInProcess 5).GetAwaiter().GetResult()
+    let result = (resilientWorkflow |> Workflow.InProcess.run 5).GetAwaiter().GetResult()
 
     // Assert
     result =! 10
@@ -185,7 +185,7 @@ let ``Timeout on parallel fanOut step``() =
     }
 
     // Act
-    let result = (parallelWorkflow |> Workflow.runInProcess 10).GetAwaiter().GetResult()
+    let result = (parallelWorkflow |> Workflow.InProcess.run 10).GetAwaiter().GetResult()
 
     // Assert
     result =! 23  // (10+1) + (10+2) = 23

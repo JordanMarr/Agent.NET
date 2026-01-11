@@ -1,4 +1,4 @@
-/// Tests for workflow composition using Workflow.toExecutor
+/// Tests for workflow composition using Workflow.InProcess.toExecutor
 /// Based on the composition examples from docs/WorkflowDSL-Design.md
 module AgentNet.Tests.CompositionWorkflowTests
 
@@ -34,7 +34,7 @@ let ``Nested workflow executes as single step``() =
     }
 
     // Convert to executor
-    let researchExecutor = Workflow.toExecutor "ResearchWorkflow" innerWorkflow
+    let researchExecutor = Workflow.InProcess.toExecutor "ResearchWorkflow" innerWorkflow
 
     // Create outer workflow that uses the inner workflow as a step
     let analyze = Executor.fromFn "Analyze" (fun (research: Research) ->
@@ -46,7 +46,7 @@ let ``Nested workflow executes as single step``() =
     }
 
     // Act
-    let result = (outerWorkflow |> Workflow.runInProcess "AI agents").GetAwaiter().GetResult()
+    let result = (outerWorkflow |> Workflow.InProcess.run "AI agents").GetAwaiter().GetResult()
 
     // Assert
     result.Research.Topic =! "AI agents"
@@ -76,7 +76,7 @@ let ``Data flows correctly through nested workflow``() =
         step innerTransform
     }
 
-    let innerAsStep = Workflow.toExecutor "InnerWorkflow" innerWorkflow
+    let innerAsStep = Workflow.InProcess.toExecutor "InnerWorkflow" innerWorkflow
 
     let step2 = Executor.fromFn "Step2" (fun (input: string) ->
         step2Input <- input
@@ -89,7 +89,7 @@ let ``Data flows correctly through nested workflow``() =
     }
 
     // Act
-    let result = (composedWorkflow |> Workflow.runInProcess "hello").GetAwaiter().GetResult()
+    let result = (composedWorkflow |> Workflow.InProcess.run "hello").GetAwaiter().GetResult()
 
     // Assert: Verify data flow
     step1Input =! "hello"
@@ -104,7 +104,7 @@ let ``Multiple levels of nesting work correctly``() =
     // Level 3 (innermost)
     let level3Step = Executor.fromFn "Level3" (fun (x: int) -> x * 2)
     let level3Workflow = workflow { step level3Step }
-    let level3Executor = Workflow.toExecutor "Level3Workflow" level3Workflow
+    let level3Executor = Workflow.InProcess.toExecutor "Level3Workflow" level3Workflow
 
     // Level 2 (wraps level 3)
     let level2Pre = Executor.fromFn "Level2Pre" (fun (x: int) -> x + 1)
@@ -114,7 +114,7 @@ let ``Multiple levels of nesting work correctly``() =
         step level3Executor
         step level2Post
     }
-    let level2Executor = Workflow.toExecutor "Level2Workflow" level2Workflow
+    let level2Executor = Workflow.InProcess.toExecutor "Level2Workflow" level2Workflow
 
     // Level 1 (wraps level 2)
     let level1Pre = Executor.fromFn "Level1Pre" (fun (x: int) -> x * 3)
@@ -131,7 +131,7 @@ let ``Multiple levels of nesting work correctly``() =
     // Level3: 16 * 2 = 32
     // Level2Post: 32 + 10 = 42
     // Level1Post: 42 - 5 = 37
-    let result = (level1Workflow |> Workflow.runInProcess 5).GetAwaiter().GetResult()
+    let result = (level1Workflow |> Workflow.InProcess.run 5).GetAwaiter().GetResult()
 
     // Assert
     result =! 37
@@ -153,7 +153,7 @@ let ``Nested workflow with custom domain types``() =
         step removeNegatives
         step removeOutliers
     }
-    let cleaningExecutor = Workflow.toExecutor "CleaningWorkflow" cleaningWorkflow
+    let cleaningExecutor = Workflow.InProcess.toExecutor "CleaningWorkflow" cleaningWorkflow
 
     // Outer workflow includes cleaning as a step
     let computeStats = Executor.fromFn "ComputeStats" (fun (cleaned: CleanedData) ->
@@ -172,7 +172,7 @@ let ``Nested workflow with custom domain types``() =
     }
 
     // Act
-    let result = (fullPipeline |> Workflow.runInProcess "sensor-data").GetAwaiter().GetResult()
+    let result = (fullPipeline |> Workflow.InProcess.run "sensor-data").GetAwaiter().GetResult()
 
     // Assert
     result.Data.Cleaned =! [1; 2; 3; 4; 5]  // -1 and 100 removed
@@ -186,7 +186,7 @@ let ``Nested workflow can be reused in multiple outer workflows``() =
     let formatNumber = Executor.fromFn "FormatNumber" (fun (n: int) -> $"[{n}]")
 
     let formatWorkflow = workflow { step formatNumber }
-    let formatExecutor = Workflow.toExecutor "FormatWorkflow" formatWorkflow
+    let formatExecutor = Workflow.InProcess.toExecutor "FormatWorkflow" formatWorkflow
 
     // First outer workflow: adds prefix
     let addPrefix = Executor.fromFn "AddPrefix" (fun (s: string) -> "PREFIX:" + s)
@@ -210,9 +210,9 @@ let ``Nested workflow can be reused in multiple outer workflows``() =
     }
 
     // Act
-    let prefixResult = (withPrefix |> Workflow.runInProcess 42).GetAwaiter().GetResult()
-    let suffixResult = (withSuffix |> Workflow.runInProcess 42).GetAwaiter().GetResult()
-    let upperResult = (withUpper |> Workflow.runInProcess 42).GetAwaiter().GetResult()
+    let prefixResult = (withPrefix |> Workflow.InProcess.run 42).GetAwaiter().GetResult()
+    let suffixResult = (withSuffix |> Workflow.InProcess.run 42).GetAwaiter().GetResult()
+    let upperResult = (withUpper |> Workflow.InProcess.run 42).GetAwaiter().GetResult()
 
     // Assert
     prefixResult =! "PREFIX:[42]"
@@ -235,7 +235,7 @@ let ``Nested workflow with parallel fanOut inside``() =
         fanOut branch1 branch2
         fanIn combine
     }
-    let parallelExecutor = Workflow.toExecutor "ParallelInnerWorkflow" parallelInnerWorkflow
+    let parallelExecutor = Workflow.InProcess.toExecutor "ParallelInnerWorkflow" parallelInnerWorkflow
 
     // Outer workflow
     let double = Executor.fromFn "Double" (fun (x: int) -> x * 2)
@@ -252,7 +252,7 @@ let ``Nested workflow with parallel fanOut inside``() =
     // Inner parallel: [10 + 100, 10 * 10] = [110, 100]
     // Combine: 210
     // Format: "Result: 210"
-    let result = (outerWorkflow |> Workflow.runInProcess 5).GetAwaiter().GetResult()
+    let result = (outerWorkflow |> Workflow.InProcess.run 5).GetAwaiter().GetResult()
 
     // Assert
     result =! "Result: 210"
@@ -264,7 +264,7 @@ let ``Full report generation pipeline with composition``() =
         { Topic = topic; Findings = [$"Key finding about {topic}"; "Supporting data"] })
 
     let researchWorkflow = workflow { step researchTopic }
-    let researchExecutor = Workflow.toExecutor "ResearchWorkflow" researchWorkflow
+    let researchExecutor = Workflow.InProcess.toExecutor "ResearchWorkflow" researchWorkflow
 
     // Analysis workflow
     let analyzeResearch = Executor.fromFn "AnalyzeResearch" (fun (research: Research) ->
@@ -278,7 +278,7 @@ let ``Full report generation pipeline with composition``() =
         step researchExecutor
         step analyzeResearch
     }
-    let analysisExecutor = Workflow.toExecutor "AnalysisWorkflow" analysisWorkflow
+    let analysisExecutor = Workflow.InProcess.toExecutor "AnalysisWorkflow" analysisWorkflow
 
     // Report workflow (composes analysis workflow)
     let generateReport = Executor.fromFn "GenerateReport" (fun (analysis: Analysis) ->
@@ -294,7 +294,7 @@ let ``Full report generation pipeline with composition``() =
     }
 
     // Act
-    let result = (reportWorkflow |> Workflow.runInProcess "Renewable Energy").GetAwaiter().GetResult()
+    let result = (reportWorkflow |> Workflow.InProcess.run "Renewable Energy").GetAwaiter().GetResult()
 
     // Assert
     result.Analysis.Research.Topic =! "Renewable Energy"
@@ -309,7 +309,7 @@ let ``Workflow can be passed directly without toExecutor``() =
         step (fun (x: int) -> x * 2 |> Task.fromResult)
     }
 
-    // Outer workflow that uses inner directly (no Workflow.toExecutor needed!)
+    // Outer workflow that uses inner directly (no Workflow.InProcess.toExecutor needed!)
     let outer = workflow {
         step (fun (x: int) -> x + 1 |> Task.fromResult)
         step inner
@@ -317,7 +317,7 @@ let ``Workflow can be passed directly without toExecutor``() =
     }
 
     // Act: 5 -> +1 -> 6 -> *2 -> 12 -> "12"
-    let result = (outer |> Workflow.runInProcess 5).GetAwaiter().GetResult()
+    let result = (outer |> Workflow.InProcess.run 5).GetAwaiter().GetResult()
 
     // Assert
     result =! "12"
@@ -341,7 +341,7 @@ let ``Multiple nested workflows can be chained directly``() =
     }
 
     // Act: 5 -> 5 -> +10 -> 15 -> *3 -> 45
-    let result = (outer |> Workflow.runInProcess 5).GetAwaiter().GetResult()
+    let result = (outer |> Workflow.InProcess.run 5).GetAwaiter().GetResult()
 
     // Assert
     result =! 45
@@ -360,7 +360,7 @@ let ``Nested workflow with multiple steps works directly``() =
     }
 
     // Act
-    let result = (outer |> Workflow.runInProcess "world").GetAwaiter().GetResult()
+    let result = (outer |> Workflow.InProcess.run "world").GetAwaiter().GetResult()
 
     // Assert: "Hello, world" -> "HELLO, WORLD" -> "HELLO, WORLD!"
     result =! "HELLO, WORLD!"

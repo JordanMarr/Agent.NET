@@ -82,9 +82,9 @@ module WorkflowInternal =
                 return (results |> Array.toList) :> obj
             // Durable-only operations - fail in in-process execution
             | AwaitEvent (_, eventName, _) ->
-                return failwith $"AwaitEvent '{eventName}' requires durable runtime. Use DurableWorkflow.run instead of Workflow.runInProcess."
+                return failwith $"AwaitEvent '{eventName}' requires durable runtime. Use Workflow.Durable.run instead of Workflow.InProcess.run."
             | Delay (_, duration) ->
-                return failwith $"Delay ({duration}) requires durable runtime. Use DurableWorkflow.run instead of Workflow.runInProcess."
+                return failwith $"Delay ({duration}) requires durable runtime. Use Workflow.Durable.run instead of Workflow.InProcess.run."
             // Resilience wrappers - work in in-process execution
             | WithRetry (inner, maxRetries) ->
                 let rec retry attempt =
@@ -430,178 +430,182 @@ module Workflow =
     let withName<'input, 'output> (name: string) (workflow: WorkflowDef<'input, 'output>) : WorkflowDef<'input, 'output> =
         { workflow with Name = Some name }
 
-    // ============ MAF COMPILATION ============
+    /// In-process workflow execution using MAF InProcessExecution.
+    /// Use this for testing, simple scenarios, or when you don't need durable suspension.
+    module InProcess =
 
-    /// Converts an AgentNet WorkflowStep to a MAF Executor.
-    /// The stepIndex is used to ensure unique executor IDs within a workflow.
-    let rec private toMAFExecutor (stepIndex: int) (step: WorkflowStep) : MAFExecutor =
-        match step with
-        | Step (durableId, _, execute) ->
-            // Wrap the execute function, creating an AgentNet context for execution
-            // Combine durableId with stepIndex to ensure uniqueness within workflow
-            let executorId = $"{durableId}_{stepIndex}"
-            let fn = Func<obj, Task<obj>>(fun input ->
-                let ctx = WorkflowContext.create()
-                execute input ctx)
-            ExecutorFactory.CreateStep(executorId, fn)
+        // ============ MAF COMPILATION ============
 
-        | Route (durableId, router) ->
-            // Router selects and executes the appropriate branch
-            // Combine durableId with stepIndex to ensure uniqueness
-            let executorId = $"{durableId}_{stepIndex}"
-            let fn = Func<obj, Task<obj>>(fun input ->
-                let ctx = WorkflowContext.create()
-                router input ctx)
-            ExecutorFactory.CreateStep(executorId, fn)
+        /// Converts an AgentNet WorkflowStep to a MAF Executor.
+        /// The stepIndex is used to ensure unique executor IDs within a workflow.
+        let rec private toMAFExecutor (stepIndex: int) (step: WorkflowStep) : MAFExecutor =
+            match step with
+            | Step (durableId, _, execute) ->
+                // Wrap the execute function, creating an AgentNet context for execution
+                // Combine durableId with stepIndex to ensure uniqueness within workflow
+                let executorId = $"{durableId}_{stepIndex}"
+                let fn = Func<obj, Task<obj>>(fun input ->
+                    let ctx = WorkflowContext.create()
+                    execute input ctx)
+                ExecutorFactory.CreateStep(executorId, fn)
 
-        | Parallel branches ->
-            // Create parallel executor from branches
-            let branchFns =
-                branches
-                |> List.map (fun (id, exec) ->
-                    Func<obj, Task<obj>>(fun input ->
-                        let ctx = WorkflowContext.create()
-                        exec input ctx))
-                |> ResizeArray
-            // Generate unique ID combining branch IDs and step index
-            let parallelId = $"Parallel_{stepIndex}_" + (branches |> List.map fst |> String.concat "_")
-            ExecutorFactory.CreateParallel(parallelId, branchFns)
+            | Route (durableId, router) ->
+                // Router selects and executes the appropriate branch
+                // Combine durableId with stepIndex to ensure uniqueness
+                let executorId = $"{durableId}_{stepIndex}"
+                let fn = Func<obj, Task<obj>>(fun input ->
+                    let ctx = WorkflowContext.create()
+                    router input ctx)
+                ExecutorFactory.CreateStep(executorId, fn)
 
-        // Durable-only operations - cannot be compiled for in-process MAF execution
-        | AwaitEvent (_, eventName, _) ->
-            failwith $"AwaitEvent '{eventName}' cannot be compiled for in-process execution. Use DurableWorkflow.toOrchestration instead."
-        | Delay (_, duration) ->
-            failwith $"Delay ({duration}) cannot be compiled for in-process execution. Use DurableWorkflow.toOrchestration instead."
+            | Parallel branches ->
+                // Create parallel executor from branches
+                let branchFns =
+                    branches
+                    |> List.map (fun (id, exec) ->
+                        Func<obj, Task<obj>>(fun input ->
+                            let ctx = WorkflowContext.create()
+                            exec input ctx))
+                    |> ResizeArray
+                // Generate unique ID combining branch IDs and step index
+                let parallelId = $"Parallel_{stepIndex}_" + (branches |> List.map fst |> String.concat "_")
+                ExecutorFactory.CreateParallel(parallelId, branchFns)
 
-        // Resilience wrappers - compile by wrapping the inner step execution
-        | WithRetry (inner, maxRetries) ->
-            let executorId = $"WithRetry_{stepIndex}_{maxRetries}"
-            let fn = Func<obj, Task<obj>>(fun input ->
-                let ctx = WorkflowContext.create()
-                let rec retry attempt =
+            // Durable-only operations - cannot be compiled for in-process MAF execution
+            | AwaitEvent (_, eventName, _) ->
+                failwith $"AwaitEvent '{eventName}' cannot be compiled for in-process execution. Use Workflow.Durable.run instead."
+            | Delay (_, duration) ->
+                failwith $"Delay ({duration}) cannot be compiled for in-process execution. Use Workflow.Durable.run instead."
+
+            // Resilience wrappers - compile by wrapping the inner step execution
+            | WithRetry (inner, maxRetries) ->
+                let executorId = $"WithRetry_{stepIndex}_{maxRetries}"
+                let fn = Func<obj, Task<obj>>(fun input ->
+                    let ctx = WorkflowContext.create()
+                    let rec retry attempt =
+                        task {
+                            try
+                                return! executeStep inner input ctx
+                            with ex when attempt < maxRetries ->
+                                return! retry (attempt + 1)
+                        }
+                    retry 0)
+                ExecutorFactory.CreateStep(executorId, fn)
+
+            | WithTimeout (inner, timeout) ->
+                let executorId = $"WithTimeout_{stepIndex}_{int timeout.TotalMilliseconds}ms"
+                let fn = Func<obj, Task<obj>>(fun input ->
                     task {
+                        let ctx = WorkflowContext.create()
+                        let execution = executeStep inner input ctx
+                        let timeoutTask = Task.Delay(timeout)
+                        let! winner = Task.WhenAny(execution, timeoutTask)
+                        if obj.ReferenceEquals(winner, timeoutTask) then
+                            return raise (TimeoutException($"Step timed out after {timeout}"))
+                        else
+                            return! execution
+                    })
+                ExecutorFactory.CreateStep(executorId, fn)
+
+            | WithFallback (inner, fallbackId, fallback) ->
+                let executorId = $"WithFallback_{stepIndex}_{fallbackId}"
+                let fn = Func<obj, Task<obj>>(fun input ->
+                    task {
+                        let ctx = WorkflowContext.create()
                         try
                             return! executeStep inner input ctx
-                        with ex when attempt < maxRetries ->
-                            return! retry (attempt + 1)
-                    }
-                retry 0)
-            ExecutorFactory.CreateStep(executorId, fn)
+                        with _ ->
+                            return! fallback input ctx
+                    })
+                ExecutorFactory.CreateStep(executorId, fn)
 
-        | WithTimeout (inner, timeout) ->
-            let executorId = $"WithTimeout_{stepIndex}_{int timeout.TotalMilliseconds}ms"
-            let fn = Func<obj, Task<obj>>(fun input ->
-                task {
-                    let ctx = WorkflowContext.create()
-                    let execution = executeStep inner input ctx
-                    let timeoutTask = Task.Delay(timeout)
-                    let! winner = Task.WhenAny(execution, timeoutTask)
-                    if obj.ReferenceEquals(winner, timeoutTask) then
-                        return raise (TimeoutException($"Step timed out after {timeout}"))
-                    else
-                        return! execution
-                })
-            ExecutorFactory.CreateStep(executorId, fn)
-
-        | WithFallback (inner, fallbackId, fallback) ->
-            let executorId = $"WithFallback_{stepIndex}_{fallbackId}"
-            let fn = Func<obj, Task<obj>>(fun input ->
-                task {
-                    let ctx = WorkflowContext.create()
-                    try
-                        return! executeStep inner input ctx
-                    with _ ->
-                        return! fallback input ctx
-                })
-            ExecutorFactory.CreateStep(executorId, fn)
-
-    /// Compiles a workflow definition to MAF Workflow using WorkflowBuilder.
-    /// Returns a Workflow that can be executed with InProcessExecution.RunAsync.
-    /// If no name is set, uses "Workflow" as the default name.
-    let toMAF<'input, 'output> (workflow: WorkflowDef<'input, 'output>) : MAFWorkflow =
-        let name = workflow.Name |> Option.defaultValue "Workflow"
-        match workflow.Steps with
-        | [] -> failwith "Workflow must have at least one step"
-        | steps ->
-            // Create executors for all steps with unique indices
-            let executors = steps |> List.mapi (fun i step -> toMAFExecutor i step)
-
-            match executors with
+        /// Compiles a workflow definition to MAF Workflow using WorkflowBuilder.
+        /// Returns a Workflow that can be executed with InProcessExecution.RunAsync.
+        /// If no name is set, uses "Workflow" as the default name.
+        let toMAF<'input, 'output> (workflow: WorkflowDef<'input, 'output>) : MAFWorkflow =
+            let name = workflow.Name |> Option.defaultValue "Workflow"
+            match workflow.Steps with
             | [] -> failwith "Workflow must have at least one step"
-            | firstExecutor :: restExecutors ->
-                // Build workflow using MAFWorkflowBuilder
-                let mutable builder = MAFWorkflowBuilder(firstExecutor).WithName(name)
+            | steps ->
+                // Create executors for all steps with unique indices
+                let executors = steps |> List.mapi (fun i step -> toMAFExecutor i step)
 
-                // Add edges between consecutive executors
-                let mutable prev = firstExecutor
-                for exec in restExecutors do
-                    builder <- builder.AddEdge(prev, exec)
-                    prev <- exec
+                match executors with
+                | [] -> failwith "Workflow must have at least one step"
+                | firstExecutor :: restExecutors ->
+                    // Build workflow using MAFWorkflowBuilder
+                    let mutable builder = MAFWorkflowBuilder(firstExecutor).WithName(name)
 
-                // Mark the last executor as output
-                builder <- builder.WithOutputFrom(prev)
+                    // Add edges between consecutive executors
+                    let mutable prev = firstExecutor
+                    for exec in restExecutors do
+                        builder <- builder.AddEdge(prev, exec)
+                        prev <- exec
 
-                // Build and return the workflow
-                builder.Build()
+                    // Mark the last executor as output
+                    builder <- builder.WithOutputFrom(prev)
 
-    // ============ MAF IN-PROCESS EXECUTION ============
+                    // Build and return the workflow
+                    builder.Build()
 
-    /// Converts MAF result data to the expected F# output type.
-    /// Handles List<object> from parallel execution by converting to F# list.
-    let private convertToOutput<'output> (data: obj) : 'output =
-        // Try direct cast first
-        match data with
-        | :? 'output as result -> result
-        | _ ->
-            // Check if we have a List<object> from parallel execution
-            // and 'output is an F# list type
-            let outputType = typeof<'output>
-            if outputType.IsGenericType &&
-               outputType.GetGenericTypeDefinition() = typedefof<_ list> then
-                // 'output is an F# list - convert List<object> to F# list
-                match data with
-                | :? System.Collections.IList as objList ->
-                    // Convert to F# list by unboxing each element
-                    let converted =
-                        objList
-                        |> Seq.cast<obj>
-                        |> Seq.toList
-                    // Box as obj list, then cast to 'output
-                    // This works because F# list is covariant for reference types
-                    box converted :?> 'output
-                | _ ->
+        // ============ MAF IN-PROCESS EXECUTION ============
+
+        /// Converts MAF result data to the expected F# output type.
+        /// Handles List<object> from parallel execution by converting to F# list.
+        let private convertToOutput<'output> (data: obj) : 'output =
+            // Try direct cast first
+            match data with
+            | :? 'output as result -> result
+            | _ ->
+                // Check if we have a List<object> from parallel execution
+                // and 'output is an F# list type
+                let outputType = typeof<'output>
+                if outputType.IsGenericType &&
+                   outputType.GetGenericTypeDefinition() = typedefof<_ list> then
+                    // 'output is an F# list - convert List<object> to F# list
+                    match data with
+                    | :? System.Collections.IList as objList ->
+                        // Convert to F# list by unboxing each element
+                        let converted =
+                            objList
+                            |> Seq.cast<obj>
+                            |> Seq.toList
+                        // Box as obj list, then cast to 'output
+                        // This works because F# list is covariant for reference types
+                        box converted :?> 'output
+                    | _ ->
+                        data :?> 'output
+                else
                     data :?> 'output
-            else
-                data :?> 'output
 
-    /// Runs a workflow via MAF InProcessExecution.
-    /// The workflow is compiled to MAF format and executed in-process.
-    let runInProcess<'input, 'output> (input: 'input) (workflow: WorkflowDef<'input, 'output>) : Task<'output> =
-        task {
-            // Compile to MAF workflow
-            let mafWorkflow = toMAF workflow
+        /// Runs a workflow via MAF InProcessExecution.
+        /// The workflow is compiled to MAF format and executed in-process.
+        let run<'input, 'output> (input: 'input) (workflow: WorkflowDef<'input, 'output>) : Task<'output> =
+            task {
+                // Compile to MAF workflow
+                let mafWorkflow = toMAF workflow
 
-            // Run via InProcessExecution
-            let! run = MAFInProcessExecution.RunAsync(mafWorkflow, input :> obj)
-            use _ = run
+                // Run via InProcessExecution
+                let! run = MAFInProcessExecution.RunAsync(mafWorkflow, input :> obj)
+                use _ = run
 
-            // Find the last ExecutorCompletedEvent - it should be the workflow output
-            let mutable lastResult: obj option = None
-            for evt in run.NewEvents do
-                match evt with
-                | :? MAFExecutorCompletedEvent as completed ->
-                    lastResult <- Some completed.Data
-                | _ -> ()
+                // Find the last ExecutorCompletedEvent - it should be the workflow output
+                let mutable lastResult: obj option = None
+                for evt in run.NewEvents do
+                    match evt with
+                    | :? MAFExecutorCompletedEvent as completed ->
+                        lastResult <- Some completed.Data
+                    | _ -> ()
 
-            match lastResult with
-            | Some data -> return convertToOutput<'output> data
-            | None -> return failwith "Workflow did not produce output. No ExecutorCompletedEvent found."
-        }
+                match lastResult with
+                | Some data -> return convertToOutput<'output> data
+                | None -> return failwith "Workflow did not produce output. No ExecutorCompletedEvent found."
+            }
 
-    /// Converts a workflow to an executor (enables workflow composition).
-    /// Uses MAF InProcessExecution to run the workflow.
-    let toExecutor<'input, 'output> (name: string) (workflow: WorkflowDef<'input, 'output>) : Executor<'input, 'output> =
-        {
-            Name = name
-            Execute = fun input _ -> runInProcess input workflow
-        }
+        /// Converts a workflow to an executor (enables workflow composition).
+        /// Uses MAF InProcessExecution to run the workflow.
+        let toExecutor<'input, 'output> (name: string) (workflow: WorkflowDef<'input, 'output>) : Executor<'input, 'output> =
+            {
+                Name = name
+                Execute = fun input _ -> run input workflow
+            }

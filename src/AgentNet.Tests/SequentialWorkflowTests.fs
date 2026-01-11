@@ -49,7 +49,7 @@ let ``Simple sequential workflow executes in order``() =
 
     // Act: Run the workflow
     let input = { Name = "F# agents"; Keywords = ["functional"; "async"] }
-    let result = (myWorkflow |> Workflow.runInProcess input).GetAwaiter().GetResult()
+    let result = (myWorkflow |> Workflow.InProcess.run input).GetAwaiter().GetResult()
 
     // Assert: Verify the output shows correct sequencing
     result.Title =! "Report: F# agents"
@@ -91,7 +91,7 @@ let ``Agent executors integrate with workflow DSL``() =
     }
 
     // Act: Run the workflow with input that matches first pattern
-    let result = (myWorkflow |> Workflow.runInProcess "Investigate: AI agents").GetAwaiter().GetResult()
+    let result = (myWorkflow |> Workflow.InProcess.run "Investigate: AI agents").GetAwaiter().GetResult()
 
     // Assert: Verify the stub was called and returned expected response
     result =! "FINAL_REPORT: Conclusion reached."
@@ -114,7 +114,7 @@ let ``Workflow output type is correctly inferred from last step``() =
 
     // This compiles without explicit type annotation, proving type inference works
     // myWorkflow : WorkflowDef<string, bool>
-    let result: bool = (myWorkflow |> Workflow.runInProcess "functional reactive async programming").GetAwaiter().GetResult()
+    let result: bool = (myWorkflow |> Workflow.InProcess.run "functional reactive async programming").GetAwaiter().GetResult()
 
     result =! true  // 4 keywords > 2
 
@@ -145,7 +145,7 @@ let ``Each step receives output from previous step``() =
 
     // Act
     let initialTopic = { Name = "Test"; Keywords = ["k1"; "k2"] }
-    let result = (myWorkflow |> Workflow.runInProcess initialTopic).GetAwaiter().GetResult()
+    let result = (myWorkflow |> Workflow.InProcess.run initialTopic).GetAwaiter().GetResult()
 
     // Assert: Verify data flow through custom types
     step1Input.Value.Name =! "Test"
@@ -180,7 +180,7 @@ let ``Workflow with type transformations through pipeline``() =
     }
 
     // Act
-    let result = (myWorkflow |> Workflow.runInProcess { Text = "The quick brown fox jumps" }).GetAwaiter().GetResult()
+    let result = (myWorkflow |> Workflow.InProcess.run { Text = "The quick brown fox jumps" }).GetAwaiter().GetResult()
 
     // Assert
     result.Count =! 5
@@ -200,7 +200,7 @@ let ``Sync functions work with Task_fromResult wrapper``() =
     }
 
     // Act
-    let result = (syncWorkflow |> Workflow.runInProcess "hello").GetAwaiter().GetResult()
+    let result = (syncWorkflow |> Workflow.InProcess.run "hello").GetAwaiter().GetResult()
 
     // Assert
     result =! "Result: 10"
@@ -219,7 +219,7 @@ let ``Mixed Task_fromResult and async functions in workflow``() =
     }
 
     // Act
-    let result = (mixedWorkflow |> Workflow.runInProcess "one two three four five").GetAwaiter().GetResult()
+    let result = (mixedWorkflow |> Workflow.InProcess.run "one two three four five").GetAwaiter().GetResult()
 
     // Assert
     result =! "Word count: 5"
@@ -240,7 +240,7 @@ let ``Workflow_toMAF compiles sequential workflow to MAF format``() =
         |> Workflow.withName "TestWorkflow"
 
     // Act: Compile to MAF
-    let mafWorkflow = Workflow.toMAF myWorkflow
+    let mafWorkflow = Workflow.InProcess.toMAF myWorkflow
 
     // Assert: MAF workflow was created (basic check - no exceptions)
     test <@ not (isNull (box mafWorkflow)) @>
@@ -259,7 +259,7 @@ let ``Workflow_runInProcess executes workflow via MAF InProcessExecution``() =
         |> Workflow.withName "InProcessTestWorkflow"
 
     // Act: Run via InProcessExecution
-    let result = (myWorkflow |> Workflow.runInProcess "hello").GetAwaiter().GetResult()
+    let result = (myWorkflow |> Workflow.InProcess.run "hello").GetAwaiter().GetResult()
 
     // Assert
     result =! "HELLO!!!"
@@ -280,7 +280,7 @@ let ``Workflow_runInProcess handles multiple steps correctly``() =
         |> Workflow.withName "MultiStepWorkflow"
 
     // Act
-    let result = (myWorkflow |> Workflow.runInProcess "hello").GetAwaiter().GetResult()
+    let result = (myWorkflow |> Workflow.InProcess.run "hello").GetAwaiter().GetResult()
 
     // Assert
     result =! "Result: 10"
@@ -295,7 +295,7 @@ let ``Workflow_toMAF works without explicit name (auto-generates)``() =
     }
 
     // Act: Compile to MAF - should not throw, auto-generates name
-    let mafWorkflow = Workflow.toMAF unnamedWorkflow
+    let mafWorkflow = Workflow.InProcess.toMAF unnamedWorkflow
 
     // Assert: MAF workflow was created
     test <@ not (isNull (box mafWorkflow)) @>
@@ -310,7 +310,7 @@ let ``Workflow_runInProcess works without explicit name (auto-generates)``() =
     }
 
     // Act: Run - should not throw, auto-generates name
-    let result = (unnamedWorkflow |> Workflow.runInProcess "test").GetAwaiter().GetResult()
+    let result = (unnamedWorkflow |> Workflow.InProcess.run "test").GetAwaiter().GetResult()
 
     // Assert
     result =! "TEST"

@@ -20,15 +20,17 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <Compile Include="DurableWorkflow.fs" />
+    <Compile Include="Workflow.Durable.fs" />
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\AgentNet\AgentNet.fsproj" />
+    <ProjectReference Include="..\AgentNet.Interop\AgentNet.Interop.csproj" />
   </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="Microsoft.DurableTask.Abstractions" Version="1.*" />
+    <PackageReference Include="Microsoft.Agents.AI.Workflows" Version="1.0.0-preview.*" />
   </ItemGroup>
 
 </Project>

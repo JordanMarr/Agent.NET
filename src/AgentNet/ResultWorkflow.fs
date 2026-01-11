@@ -115,7 +115,7 @@ module ResultExecutor =
         {
             Name = name
             Execute = fun input _ -> task {
-                let! result = Workflow.runInProcess input workflow
+                let! result = Workflow.InProcess.run input workflow
                 return Ok result
             }
         }

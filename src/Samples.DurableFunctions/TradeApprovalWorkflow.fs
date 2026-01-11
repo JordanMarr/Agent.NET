@@ -108,7 +108,7 @@ let tradeApprovalWorkflow =
 [<Function("TradeApprovalOrchestrator")>]
 let orchestrator ([<OrchestrationTrigger>] ctx: TaskOrchestrationContext) =
     let request = ctx.GetInput<TradeRequest>()
-    DurableWorkflow.run ctx request tradeApprovalWorkflow
+    Workflow.Durable.run ctx request tradeApprovalWorkflow
 
 // --- HTTP Triggers ---
 

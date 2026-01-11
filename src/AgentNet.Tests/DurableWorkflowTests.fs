@@ -54,9 +54,9 @@ let ``runInProcess fails for workflow with awaitEvent``() =
 
     // Act & Assert - Exception is thrown during MAF compilation
     let ex = Assert.Throws<Exception>(fun () ->
-        (durableWorkflow |> Workflow.runInProcess "test").GetAwaiter().GetResult() |> ignore)
+        (durableWorkflow |> Workflow.InProcess.run "test").GetAwaiter().GetResult() |> ignore)
     test <@ ex.Message.Contains("AwaitEvent") @>
-    test <@ ex.Message.Contains("durable") || ex.Message.Contains("DurableWorkflow") @>
+    test <@ ex.Message.Contains("Workflow.Durable") @>
 
 [<Test>]
 let ``runInProcess fails for workflow with delay``() =
@@ -68,9 +68,9 @@ let ``runInProcess fails for workflow with delay``() =
 
     // Act & Assert - Exception is thrown during MAF compilation
     let ex = Assert.Throws<Exception>(fun () ->
-        (durableWorkflow |> Workflow.runInProcess 5).GetAwaiter().GetResult() |> ignore)
+        (durableWorkflow |> Workflow.InProcess.run 5).GetAwaiter().GetResult() |> ignore)
     test <@ ex.Message.Contains("Delay") @>
-    test <@ ex.Message.Contains("durable") || ex.Message.Contains("DurableWorkflow") @>
+    test <@ ex.Message.Contains("Workflow.Durable") @>
 
 [<Test>]
 let ``containsDurableOperations returns true for workflow with awaitEvent``() =
@@ -169,7 +169,7 @@ let ``Resilience ops work fine without durable ops via runInProcess``() =
     }
 
     // Act
-    let result = (resilientWorkflow |> Workflow.runInProcess 5).GetAwaiter().GetResult()
+    let result = (resilientWorkflow |> Workflow.InProcess.run 5).GetAwaiter().GetResult()
 
     // Assert
     result =! 10

@@ -133,7 +133,7 @@ let run (symbol1: string) (symbol2: string) : Task<unit> = task {
     printfn "Step 2: AI agent analyzing stocks..."
 
     let input = { Symbol1 = symbol1; Symbol2 = symbol2 }
-    let! report = Workflow.runInProcess input wf
+    let! report = Workflow.InProcess.run input wf
 
     printfn "%s" report
 }

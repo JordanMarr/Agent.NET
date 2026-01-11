@@ -30,9 +30,13 @@
     <Compile Include="TypedAgent.fs" />
     <Compile Include="Executor.fs" />
     <Compile Include="DurableId.fs" />
-    <Compile Include="Workflow.fs" />
+    <Compile Include="Workflow.InProcess.fs" />
     <Compile Include="ResultWorkflow.fs" />
     <Compile Include="AgentFramework.fs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="AgentNet.Durable" />
   </ItemGroup>
 
   <ItemGroup>

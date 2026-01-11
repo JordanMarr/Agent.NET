@@ -35,7 +35,7 @@ let ``FanOut executes all executors and FanIn aggregates results``() =
     }
 
     // Act
-    let result = (parallelWorkflow |> Workflow.runInProcess "AAPL").GetAwaiter().GetResult()
+    let result = (parallelWorkflow |> Workflow.InProcess.run "AAPL").GetAwaiter().GetResult()
 
     // Assert
     result.Reports.Length =! 3
@@ -60,7 +60,7 @@ let ``FanOut with two executors``() =
     }
 
     // Act: input 5 -> prepare: 10 -> fanOut: [20, 30] -> combine: 50
-    let result = (parallelWorkflow |> Workflow.runInProcess 5).GetAwaiter().GetResult()
+    let result = (parallelWorkflow |> Workflow.InProcess.run 5).GetAwaiter().GetResult()
 
     // Assert
     result =! 50
@@ -84,7 +84,7 @@ let ``FanOut preserves order of results``() =
     }
 
     // Act
-    let result = (parallelWorkflow |> Workflow.runInProcess "X").GetAwaiter().GetResult()
+    let result = (parallelWorkflow |> Workflow.InProcess.run "X").GetAwaiter().GetResult()
 
     // Assert: Results should be in executor order
     result =! "0:X,1:X,2:X"
@@ -109,7 +109,7 @@ let ``FanOut followed by additional processing``() =
     }
 
     // Act: 10 -> fanOut: [20, 30] -> sum: 50 -> format: "Total: 50"
-    let result = (parallelWorkflow |> Workflow.runInProcess 10).GetAwaiter().GetResult()
+    let result = (parallelWorkflow |> Workflow.InProcess.run 10).GetAwaiter().GetResult()
 
     // Assert
     result =! "Total: 50"
@@ -135,7 +135,7 @@ let ``FanOut with custom record types``() =
     }
 
     // Act
-    let result = (parallelWorkflow |> Workflow.runInProcess "DATA").GetAwaiter().GetResult()
+    let result = (parallelWorkflow |> Workflow.InProcess.run "DATA").GetAwaiter().GetResult()
 
     // Assert
     result =! "DATA-A|DATA-B"
@@ -161,7 +161,7 @@ let ``FanOut with list syntax and + operator for 6+ branches``() =
     }
 
     // Act: 10 -> fanOut: [11, 12, 13, 14, 15, 16] -> sum: 81
-    let result = (parallelWorkflow |> Workflow.runInProcess 10).GetAwaiter().GetResult()
+    let result = (parallelWorkflow |> Workflow.InProcess.run 10).GetAwaiter().GetResult()
 
     // Assert
     result =! 81
@@ -186,7 +186,7 @@ let ``FanOut with list syntax, Task_fromResult and + operator for 6+ branches``(
     }
 
     // Act: 10 -> fanOut: [11, 12, 13, 14, 15, 16] -> sum: 81
-    let result = (parallelWorkflow |> Workflow.runInProcess 10).GetAwaiter().GetResult()
+    let result = (parallelWorkflow |> Workflow.InProcess.run 10).GetAwaiter().GetResult()
 
     // Assert
     result =! 81
