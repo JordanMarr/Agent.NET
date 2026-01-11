@@ -1,0 +1,63 @@
+### Azure Durable Functions - Trade Approval Workflow
+### Use with REST Client extension in VS Code or similar tools
+
+@baseUrl = http://localhost:7071/api
+
+### ============================================================================
+### 1. START A NEW TRADE APPROVAL WORKFLOW
+### ============================================================================
+### This kicks off the orchestration and returns an instance ID.
+### Save the instanceId from the response for use in subsequent requests.
+
+POST {{baseUrl}}/trade/start
+Content-Type: application/json
+
+{
+    "Symbol": "MSFT",
+    "Amount": 100.00
+}
+
+### ============================================================================
+### 2. CHECK WORKFLOW STATUS
+### ============================================================================
+### Replace {instanceId} with the actual instance ID from step 1.
+### Status will be "Running" while waiting for approval.
+
+@instanceId = YOUR_INSTANCE_ID_HERE
+
+GET {{baseUrl}}/trade/{{instanceId}}/status
+
+### ============================================================================
+### 3a. APPROVE THE TRADE
+### ============================================================================
+### Send an approval decision to resume the workflow.
+
+POST {{baseUrl}}/trade/{{instanceId}}/approve
+Content-Type: application/json
+
+{
+    "Approved": true,
+    "ApproverName": "John Smith",
+    "Comments": "Looks good, proceed with the trade."
+}
+
+### ============================================================================
+### 3b. REJECT THE TRADE (Alternative to 3a)
+### ============================================================================
+### Send a rejection decision instead.
+
+POST {{baseUrl}}/trade/{{instanceId}}/approve
+Content-Type: application/json
+
+{
+    "Approved": false,
+    "ApproverName": "Jane Doe",
+    "Comments": "Market conditions unfavorable, rejecting trade."
+}
+
+### ============================================================================
+### 4. CHECK FINAL STATUS
+### ============================================================================
+### After approval/rejection, check status again to see the completed result.
+
+GET {{baseUrl}}/trade/{{instanceId}}/status
