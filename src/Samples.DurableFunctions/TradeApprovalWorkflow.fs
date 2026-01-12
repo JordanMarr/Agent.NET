@@ -62,12 +62,14 @@ module ApprovalWorkflow =
         |> Task.fromResult
 
     /// Sends the analysis for human review (e.g., email, Teams notification)
-    let sendForApproval (analysis: StockAnalysis) : Task<StockAnalysis> = 
-        // In a real app, this would send a notification
+    /// Returns unit to satisfy the event boundary invariant - data needed after
+    /// the event boundary should be stored in workflow context.
+    let sendForApproval (analysis: StockAnalysis) : Task<unit> =
+        // In a real app, this would send a notification and store analysis in context
         printfn $"[Notification] Trade approval requested for {analysis.Symbol}"
         printfn $"[Notification] Recommendation: {analysis.Recommendation}"
         printfn $"[Notification] Confidence: {analysis.Confidence:P0}"
-        analysis |> Task.fromResult
+        () |> Task.fromResult
 
     /// Executes or cancels the trade based on approval decision
     let executeTrade (decision: ApprovalDecision) = 
@@ -89,17 +91,20 @@ module ApprovalWorkflow =
     // ============================================================================
 
     /// A clean, declarative, durable workflow that:
-    /// 1. Analyzes a stock using AI
-    /// 2. Sends for human approval
-    /// 3. Waits for approval decision (can take days - workflow survives restarts)
-    /// 4. Executes or cancels based on decision
+    /// 1. Analyzes a stock using AI (TradeRequest -> StockAnalysis)
+    /// 2. Sends for human approval (StockAnalysis -> unit)
+    ///    Note: Returns unit to satisfy event boundary invariant.
+    ///    Data needed after the event should be stored in workflow context.
+    /// 3. Waits for approval decision (unit -> ApprovalDecision)
+    ///    Workflow checkpoints and survives restarts while waiting.
+    /// 4. Executes or cancels based on decision (ApprovalDecision -> TradeResult)
     let tradeApprovalWorkflow =
         workflow {
             name "TradeApprovalWorkflow"
-            step analyzeStock
-            step sendForApproval
-            awaitEvent "TradeApproval" eventOf<ApprovalDecision>
-            step executeTrade
+            step analyzeStock           // TradeRequest -> StockAnalysis
+            step sendForApproval        // StockAnalysis -> unit (event boundary)
+            awaitEvent "TradeApproval" eventOf<ApprovalDecision>  // unit -> ApprovalDecision
+            step executeTrade           // ApprovalDecision -> TradeResult
         }
 
 /// ============================================================================

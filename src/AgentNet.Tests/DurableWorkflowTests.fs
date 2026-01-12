@@ -13,8 +13,9 @@ type ApprovalDecision = { Approved: bool; Reason: string }
 [<Test>]
 let ``awaitEvent creates AwaitEvent step in workflow``() =
     // Arrange & Act - using type witness pattern
+    // Note: awaitEvent requires the preceding step to return unit (event boundary invariant)
     let durableWorkflow = workflow {
-        step (fun (x: string) -> x.ToUpper() |> Task.fromResult)
+        step (fun (x: string) -> () |> Task.fromResult)  // Must return unit before awaitEvent
         awaitEvent "ApprovalDecision" eventOf<ApprovalDecision>
     }
 
@@ -35,9 +36,10 @@ let ``delay creates Delay step in workflow``() =
 [<Test>]
 let ``awaitEvent and delay can be combined``() =
     // Arrange & Act
+    // delayFor preserves the output type, so we need unit before awaitEvent
     let durableWorkflow = workflow {
-        step (fun (x: string) -> x |> Task.fromResult)
-        delayFor (TimeSpan.FromMinutes 5.)
+        step (fun (x: string) -> () |> Task.fromResult)  // Return unit
+        delayFor (TimeSpan.FromMinutes 5.)               // Preserves unit
         awaitEvent "HumanReview" eventOf<ApprovalDecision>
     }
 
@@ -48,7 +50,7 @@ let ``awaitEvent and delay can be combined``() =
 let ``runInProcess fails for workflow with awaitEvent``() =
     // Arrange
     let durableWorkflow = workflow {
-        step (fun (x: string) -> x.ToUpper() |> Task.fromResult)
+        step (fun (x: string) -> () |> Task.fromResult)  // Must return unit before awaitEvent
         awaitEvent "ApprovalDecision" eventOf<ApprovalDecision>
     }
 
@@ -76,7 +78,7 @@ let ``runInProcess fails for workflow with delay``() =
 let ``containsDurableOperations returns true for workflow with awaitEvent``() =
     // Arrange
     let durableWorkflow = workflow {
-        step (fun (x: string) -> x |> Task.fromResult)
+        step (fun (x: string) -> () |> Task.fromResult)  // Must return unit before awaitEvent
         awaitEvent "TestEvent" eventOf<string>
     }
 
@@ -109,7 +111,7 @@ let ``containsDurableOperations returns false for workflow without durable ops``
 let ``containsDurableOperations detects durable ops in workflow``() =
     // Arrange
     let durableWorkflow = workflow {
-        step (fun (x: string) -> x |> Task.fromResult)
+        step (fun (x: string) -> () |> Task.fromResult)  // Must return unit before awaitEvent
         awaitEvent "Event" eventOf<string>
     }
 
@@ -120,7 +122,7 @@ let ``containsDurableOperations detects durable ops in workflow``() =
 let ``validateForInProcess throws for durable workflow``() =
     // Arrange
     let durableWorkflow = workflow {
-        step (fun (x: string) -> x |> Task.fromResult)
+        step (fun (x: string) -> () |> Task.fromResult)  // Must return unit before awaitEvent
         awaitEvent "Event" eventOf<string>
     }
 
@@ -146,7 +148,7 @@ let ``awaitEvent type flows to next step``() =
         $"Email sent: {decision.Reason}" |> Task.fromResult
 
     let durableWorkflow = workflow {
-        step (fun (x: string) -> x |> Task.fromResult)
+        step (fun (x: string) -> () |> Task.fromResult)  // Must return unit before awaitEvent
         awaitEvent "ApprovalDecision" eventOf<ApprovalDecision>
         step sendApprovalEmail
     }
@@ -174,3 +176,15 @@ let ``Resilience ops work fine without durable ops via runInProcess``() =
     // Assert
     result =! 10
     DurableWorkflow.containsDurableOperations resilientWorkflow =! false
+
+/// Test that demonstrates the event boundary invariant:
+/// The compiler rejects workflows where awaitEvent follows a non-unit step.
+/// This test is a compile-time verification - if it compiles, the invariant is NOT enforced.
+/// Uncomment to verify that the following DOES NOT COMPILE:
+// [<Test>]
+// let ``awaitEvent rejects non-unit output - THIS SHOULD NOT COMPILE``() =
+//     let invalidWorkflow = workflow {
+//         step (fun (x: string) -> x.ToUpper() |> Task.fromResult)  // Returns string, not unit
+//         awaitEvent "Event" eventOf<ApprovalDecision>  // Should fail to compile!
+//     }
+//     ()

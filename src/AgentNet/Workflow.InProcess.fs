@@ -254,7 +254,22 @@ module WorkflowInternal =
 /// Builder for the workflow computation expression
 type WorkflowBuilder() =
 
-    member _.Yield(_) : WorkflowState<'a, 'a> = { Name = None; Steps = [] }
+    // ============ CE CORE MEMBERS (per DESIGN_CE_TYPE_THREADING.md) ============
+    // These members implement the spec-compliant type threading invariants.
+    // No member may use wildcards (_) or erased types (obj) in WorkflowState.
+
+    /// Identity workflow - produces input unchanged
+    member _.Zero() : WorkflowState<'input, 'input> = { Name = None; Steps = [] }
+
+    /// Yields a value - for CE compatibility (workflow uses Zero primarily)
+    member _.Yield(_: unit) : WorkflowState<'input, 'input> = { Name = None; Steps = [] }
+
+    /// Delays evaluation - preserves phantom types exactly
+    member _.Delay(f: unit -> WorkflowState<'input, 'a>) : WorkflowState<'input, 'a> = f()
+
+    /// Combines two workflow states - output type comes from second state
+    member _.Combine(s1: WorkflowState<'input, 'a>, s2: WorkflowState<'input, 'b>) : WorkflowState<'input, 'b> =
+        { Name = s2.Name |> Option.orElse s1.Name; Steps = s1.Steps @ s2.Steps }
 
     /// Sets the name of the workflow (used for MAF compilation and durable function registration)
     [<CustomOperation("name")>]
@@ -262,22 +277,18 @@ type WorkflowBuilder() =
         { state with Name = Some name }
 
     // ============ STEP OPERATIONS ============
-    // Uses inline SRTP to accept Task fn, Async fn, TypedAgent, Executor, Workflow, or Step directly
-    // Durable IDs are auto-generated; display names come from Executor.Name if available
+    // Type threading invariant: WorkflowState<'input,'a> -> Executor<'a,'b> -> WorkflowState<'input,'b>
+    // Uses inline SRTP to accept Task fn, Async fn, TypedAgent, Executor, Workflow, or Step directly.
+    // All overloads delegate to the canonical Executor<'a,'b> pattern internally.
+    // Durable IDs are auto-generated; display names come from Executor.Name if available.
+    // NO WILDCARDS OR ERASED TYPES - enforced by single Step member with Zero providing initial state.
 
-    /// Adds first step - establishes workflow input/output types (uses SRTP for type resolution)
+    /// Adds a step to the workflow - threads type through from 'a to 'b (uses SRTP for type resolution).
+    /// For the first step, 'a unifies with 'input from Zero().
+    /// INVARIANT: WorkflowState<'input,'a> + Step<'a,'b> -> WorkflowState<'input,'b>
     [<CustomOperation("step")>]
-    member inline _.StepFirst(state: WorkflowState<_, _>, x: ^T) : WorkflowState<'i, 'o> =
-        let step : Step<'i, 'o> = ((^T or StepConv) : (static member ToStep: StepConv * ^T -> Step<'i, 'o>) (StepConv, x))
-        let durableId = WorkflowInternal.getDurableId step
-        let displayName = WorkflowInternal.getDisplayName step
-        WorkflowInternal.warnIfLambda step durableId
-        { Name = state.Name; Steps = state.Steps @ [WorkflowInternal.wrapStep durableId displayName step] }
-
-    /// Adds subsequent step - threads input type through (uses SRTP for type resolution)
-    [<CustomOperation("step")>]
-    member inline _.Step(state: WorkflowState<'input, 'middle>, x: ^T) : WorkflowState<'input, 'output> =
-        let step : Step<'middle, 'output> = ((^T or StepConv) : (static member ToStep: StepConv * ^T -> Step<'middle, 'output>) (StepConv, x))
+    member inline _.Step(state: WorkflowState<'input, 'a>, x: ^T) : WorkflowState<'input, 'b> =
+        let step : Step<'a, 'b> = ((^T or StepConv) : (static member ToStep: StepConv * ^T -> Step<'a, 'b>) (StepConv, x))
         let durableId = WorkflowInternal.getDurableId step
         let displayName = WorkflowInternal.getDisplayName step
         WorkflowInternal.warnIfLambda step durableId

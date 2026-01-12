@@ -32,13 +32,18 @@ type WorkflowBuilder with
     /// The received event becomes the input for the next step.
     /// Usage: awaitEvent "ApprovalEvent" eventOf<ApprovalDecision>
     /// This operation requires DurableTask runtime - will fail with runInProcess.
+    ///
+    /// EVENT BOUNDARY INVARIANT (per DESIGN_CE_TYPE_THREADING.md):
+    /// Input state MUST be WorkflowState<'input, unit>.
+    /// This enforces that all data needed after the event must be stored in context
+    /// before the event boundary. The step before awaitEvent must return unit.
     [<CustomOperation("awaitEvent")>]
-    member _.AwaitEvent(state: WorkflowState<'input, _>, eventName: string, _witness: 'T) : WorkflowState<'input, 'T> =
+    member _.AwaitEvent(state: WorkflowState<'input, unit>, eventName: string, _witness: 'event) : WorkflowState<'input, 'event> =
         // Early validation - fail fast at workflow construction time
         if String.IsNullOrWhiteSpace(eventName) then
             failwith "awaitEvent: event name cannot be null or empty"
 
-        let eventType = typeof<'T>
+        let eventType = typeof<'event>
         if not (eventType.IsPublic || eventType.IsNestedPublic) then
             failwith $"awaitEvent: event type '{eventType.FullName}' must be public"
 
