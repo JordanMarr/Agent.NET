@@ -18,8 +18,8 @@ type WorkflowStep =
     | Route of durableId: string * router: (obj -> WorkflowContext -> Task<obj>)
     | Parallel of branches: (string * (obj -> WorkflowContext -> Task<obj>)) list  // (durableId, executor) pairs
     // Durable-only operations (require DurableTask runtime)
-    // exec takes TaskOrchestrationContext (as obj) and returns the event data
-    | AwaitEvent of durableId: string * exec: (obj -> Task<obj>)
+    // Stores metadata only - durable primitives are invoked in the execution layer
+    | AwaitEvent of durableId: string * eventName: string
     | Delay of durableId: string * duration: TimeSpan
     // Resilience wrappers (wrap the preceding step)
     | WithRetry of inner: WorkflowStep * maxRetries: int

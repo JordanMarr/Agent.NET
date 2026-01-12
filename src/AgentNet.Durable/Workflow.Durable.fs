@@ -1,68 +1,10 @@
 namespace AgentNet.Durable
 
 open System
-open System.Threading
 open System.Threading.Tasks
 open Microsoft.DurableTask
 open AgentNet
 open AgentNet.Interop
-
-// Type aliases to avoid conflicts between AgentNet and MAF
-type MAFExecutor = Microsoft.Agents.AI.Workflows.Executor
-type MAFWorkflow = Microsoft.Agents.AI.Workflows.Workflow
-type MAFWorkflowBuilder = Microsoft.Agents.AI.Workflows.WorkflowBuilder
-type MAFInProcessExecution = Microsoft.Agents.AI.Workflows.InProcessExecution
-type MAFExecutorCompletedEvent = Microsoft.Agents.AI.Workflows.ExecutorCompletedEvent
-
-/// Durable workflow extensions for WorkflowBuilder.
-/// These operations require DurableTask runtime - will fail with runInProcess.
-/// Users must `open AgentNet.Durable` to access these extensions.
-[<AutoOpen>]
-module DurableWorkflowExtensions =
-
-    /// Type witness helper for awaitEvent.
-    /// Usage: awaitEvent "ApprovalEvent" eventOf<ApprovalDecision>
-    let eventOf<'T> : 'T = Unchecked.defaultof<'T>
-
-    type WorkflowBuilder with
-        /// Waits for an external event with the given name and expected type.
-        /// The workflow is checkpointed and suspended until the event arrives.
-        /// The received event becomes the input for the next step.
-        /// Usage: awaitEvent "ApprovalEvent" eventOf<ApprovalDecision>
-        /// This operation requires DurableTask runtime - will fail with runInProcess.
-        [<CustomOperation("awaitEvent")>]
-        member _.AwaitEvent(state: WorkflowState<'input, _>, eventName: string, _witness: 'T) : WorkflowState<'input, 'T> =
-            // Early validation - fail fast at workflow construction time
-            if String.IsNullOrWhiteSpace(eventName) then
-                failwith "awaitEvent: event name cannot be null or empty"
-
-            let eventType = typeof<'T>
-            if not (eventType.IsPublic || eventType.IsNestedPublic) then
-                failwith $"awaitEvent: event type '{eventType.FullName}' must be public"
-
-            if eventType.IsAbstract then
-                failwith $"awaitEvent: event type '{eventType.FullName}' cannot be abstract"
-
-            let durableId = $"AwaitEvent_{eventName}_{eventType.Name}"
-
-            // Pre-baked executor function - captures 'T at construction time
-            // No reflection needed at execution time
-            let exec = fun (ctxObj: obj) -> task {
-                let ctx = ctxObj :?> TaskOrchestrationContext
-                let! result = ctx.WaitForExternalEvent<'T>(eventName)
-                return box result
-            }
-
-            { Name = state.Name; Steps = state.Steps @ [AwaitEvent(durableId, exec)] }
-
-        /// Delays the workflow for the specified duration.
-        /// The workflow is checkpointed and suspended during the delay.
-        /// This operation requires DurableTask runtime - will fail with runInProcess.
-        [<CustomOperation("delayFor")>]
-        member _.DelayFor(state: WorkflowState<'input, 'output>, duration: TimeSpan) : WorkflowState<'input, 'output> =
-            let durableId = $"Delay_{int duration.TotalMilliseconds}ms"
-            { Name = state.Name; Steps = state.Steps @ [Delay(durableId, duration)] }
-
 
 /// Functions for compiling and running durable workflows.
 /// These require Azure Durable Functions / DurableTask runtime.
@@ -119,151 +61,86 @@ module Workflow =
             |> List.collect collectActivities
             |> List.distinctBy fst
 
-        // ============ MAF COMPILATION FOR DURABLE EXECUTION ============
-        // Maps Agent.NET DSL nodes to MAF executors with DTFx primitives for durable operations.
-        // MAF handles orchestration; DTFx provides durable suspension (events, timers).
+        // ============ EXECUTOR SELECTION ============
+        // Maps Agent.NET DSL nodes to IExecutor instances.
+        // This function is 100% PURE - no durable primitives called here.
+        // Executors receive TaskOrchestrationContext at execution time, not during creation.
 
-        /// Converts an AgentNet WorkflowStep to a MAF Executor within a durable orchestration context.
-        /// Steps are pure .NET functions; durable operations call DTFx primitives.
-        let rec private toMAFExecutor
-            (ctx: TaskOrchestrationContext)
+        /// Wraps an execute function with WorkflowContext creation.
+        /// Returns a Func that C# can use directly.
+        let private wrapWithContext (execute: obj -> WorkflowContext -> Task<obj>) : Func<obj, Task<obj>> =
+            Func<obj, Task<obj>>(fun input ->
+                let ctx = WorkflowContext.create()
+                execute input ctx)
+
+        /// Extracts and wraps the execute function from a WorkflowStep.
+        let rec private extractAndWrapFunc (step: WorkflowStep) : Func<obj, Task<obj>> =
+            match step with
+            | Step (_, _, execute) -> wrapWithContext execute
+            | Route (_, router) -> wrapWithContext router
+            | _ -> failwith "Cannot extract execute function from this step type for resilience wrapper"
+
+        /// Pure executor selection - NO durable primitives called here.
+        /// Executors receive TaskOrchestrationContext at execution time via ExecuteAsync.
+        /// All durable primitive invocation happens inside ExecuteAsync (in C#).
+        let rec private selectExecutor<'output>
             (stepIndex: int)
             (step: WorkflowStep)
-            : MAFExecutor =
+            : IExecutor =
             match step with
             | Step (durableId, _, execute) ->
-                // Pure .NET function - executed directly by MAF
-                let executorId = $"{durableId}_{stepIndex}"
-                let fn = Func<obj, Task<obj>>(fun input ->
-                    let workflowCtx = WorkflowContext.create()
-                    execute input workflowCtx)
-                ExecutorFactory.CreateStep(executorId, fn)
+                // Wrap with WorkflowContext and pass to C#
+                ExecutorFactory.CreateStepExecutor(durableId, stepIndex, wrapWithContext execute)
 
             | Route (durableId, router) ->
-                // Router selects and executes the appropriate branch - pure .NET
-                let executorId = $"{durableId}_{stepIndex}"
-                let fn = Func<obj, Task<obj>>(fun input ->
-                    let workflowCtx = WorkflowContext.create()
-                    router input workflowCtx)
-                ExecutorFactory.CreateStep(executorId, fn)
+                // Wrap with WorkflowContext and pass to C#
+                ExecutorFactory.CreateStepExecutor(durableId, stepIndex, wrapWithContext router)
 
             | Parallel branches ->
-                // Create parallel executor from branches - pure .NET functions
+                // Wrap each branch with WorkflowContext and pass to C#
                 let branchFns =
                     branches
-                    |> List.map (fun (id, exec) ->
-                        Func<obj, Task<obj>>(fun input ->
-                            let workflowCtx = WorkflowContext.create()
-                            exec input workflowCtx))
+                    |> List.map (fun (_, exec) -> wrapWithContext exec)
                     |> ResizeArray
                 let parallelId = $"Parallel_{stepIndex}_" + (branches |> List.map fst |> String.concat "_")
-                ExecutorFactory.CreateParallel(parallelId, branchFns)
+                ExecutorFactory.CreateParallelExecutor(parallelId, stepIndex, branchFns)
 
-            // Durable operations - call pre-baked executor (no reflection)
-            | AwaitEvent (durableId, exec) ->
-                let executorId = $"{durableId}_{stepIndex}"
-                // exec already captures the typed WaitForExternalEventAsync<'T> call
-                let fn = Func<obj, Task<obj>>(fun _ -> exec ctx)
-                ExecutorFactory.CreateStep(executorId, fn)
+            // Durable operations - durable primitives invoked inside ExecuteAsync
+            | AwaitEvent (durableId, eventName) ->
+                ExecutorFactory.CreateAwaitEventExecutor<'output>(durableId, eventName, stepIndex)
 
             | Delay (durableId, duration) ->
-                let executorId = $"{durableId}_{stepIndex}"
-                let fn = Func<obj, Task<obj>>(fun input -> task {
-                    let fireAt = ctx.CurrentUtcDateTime.Add(duration)
-                    do! ctx.CreateTimer(fireAt, CancellationToken.None)
-                    return input  // Pass through unchanged
-                })
-                ExecutorFactory.CreateStep(executorId, fn)
+                ExecutorFactory.CreateDelayExecutor(durableId, duration, stepIndex)
 
             // Resilience wrappers
             | WithRetry (inner, maxRetries) ->
-                let executorId = $"WithRetry_{stepIndex}_{maxRetries}"
-                let fn = Func<obj, Task<obj>>(fun input ->
-                    let workflowCtx = WorkflowContext.create()
-                    let rec retry attempt =
-                        task {
-                            try
-                                return! executeStep inner input workflowCtx
-                            with ex when attempt < maxRetries ->
-                                return! retry (attempt + 1)
-                        }
-                    retry 0)
-                ExecutorFactory.CreateStep(executorId, fn)
+                let innerFunc = extractAndWrapFunc inner
+                ExecutorFactory.CreateRetryExecutor($"Retry_{stepIndex}", maxRetries, stepIndex, innerFunc)
 
             | WithTimeout (inner, timeout) ->
-                let executorId = $"WithTimeout_{stepIndex}_{int timeout.TotalMilliseconds}ms"
-                let fn = Func<obj, Task<obj>>(fun input -> task {
-                    // Use durable timer for timeout
-                    let fireAt = ctx.CurrentUtcDateTime.Add(timeout)
-                    let timerTask = ctx.CreateTimer(fireAt, CancellationToken.None)
-                    let workflowCtx = WorkflowContext.create()
-                    let stepTask = executeStep inner input workflowCtx
-                    let! winner = Task.WhenAny(stepTask, timerTask)
-                    if obj.ReferenceEquals(winner, timerTask) then
-                        return raise (TimeoutException($"Step timed out after {timeout}"))
-                    else
-                        return! stepTask
-                })
-                ExecutorFactory.CreateStep(executorId, fn)
+                let innerFunc = extractAndWrapFunc inner
+                ExecutorFactory.CreateTimeoutExecutor($"Timeout_{stepIndex}", timeout, stepIndex, innerFunc)
 
             | WithFallback (inner, fallbackId, fallback) ->
-                let executorId = $"WithFallback_{stepIndex}_{fallbackId}"
-                let fn = Func<obj, Task<obj>>(fun input -> task {
-                    let workflowCtx = WorkflowContext.create()
-                    try
-                        return! executeStep inner input workflowCtx
-                    with _ ->
-                        return! fallback input workflowCtx
-                })
-                ExecutorFactory.CreateStep(executorId, fn)
+                let innerFunc = extractAndWrapFunc inner
+                let fallbackFunc = wrapWithContext fallback
+                ExecutorFactory.CreateFallbackExecutor($"Fallback_{stepIndex}", fallbackId, stepIndex, innerFunc, fallbackFunc)
 
-        /// Compiles a workflow definition to MAF Workflow for durable execution.
-        /// The TaskOrchestrationContext is captured in closures for durable operations.
-        /// Returns a Workflow that can be executed with InProcessExecution.RunAsync.
-        let toMAF<'input, 'output>
-            (ctx: TaskOrchestrationContext)
-            (workflow: WorkflowDef<'input, 'output>)
-            : MAFWorkflow =
-            let name = workflow.Name |> Option.defaultValue "Workflow"
-            match workflow.Steps with
-            | [] -> failwith "Workflow must have at least one step"
-            | steps ->
-                // Create executors for all steps with unique indices
-                let executors = steps |> List.mapi (fun i step -> toMAFExecutor ctx i step)
+        // ============ DURABLE EXECUTION ============
 
-                match executors with
-                | [] -> failwith "Workflow must have at least one step"
-                | firstExecutor :: restExecutors ->
-                    // Build workflow using MAFWorkflowBuilder
-                    let mutable builder = MAFWorkflowBuilder(firstExecutor).WithName(name)
-
-                    // Add edges between consecutive executors
-                    let mutable prev = firstExecutor
-                    for exec in restExecutors do
-                        builder <- builder.AddEdge(prev, exec)
-                        prev <- exec
-
-                    // Mark the last executor as output
-                    builder <- builder.WithOutputFrom(prev)
-
-                    // Build and return the workflow
-                    builder.Build()
-
-        // ============ MAF IN-PROCESS EXECUTION ============
-
-        /// Converts MAF result data to the expected F# output type.
-        /// Handles List<object> from parallel execution by converting to F# list.
+        /// Converts result data to the expected F# output type.
+        /// Handles arrays from parallel execution by converting to F# list.
         let private convertToOutput<'output> (data: obj) : 'output =
             // Try direct cast first
             match data with
             | :? 'output as result -> result
             | _ ->
-                // Check if we have a List<object> from parallel execution
+                // Check if we have an array from parallel execution
                 // and 'output is an F# list type
                 let outputType = typeof<'output>
                 if outputType.IsGenericType &&
                    outputType.GetGenericTypeDefinition() = typedefof<_ list> then
-                    // 'output is an F# list - convert List<object> to F# list
+                    // 'output is an F# list - convert array to F# list
                     match data with
                     | :? System.Collections.IList as objList ->
                         // Convert to F# list by unboxing each element
@@ -280,31 +157,27 @@ module Workflow =
 
         /// Runs a workflow within a durable orchestration context.
         /// Call this from your [<OrchestrationTrigger>] function.
-        /// Compiles to MAF, then executes via MAF InProcessExecution.
+        /// Executes each step in sequence, passing ctx to each executor's ExecuteAsync.
         let run<'input, 'output>
             (ctx: TaskOrchestrationContext)
             (input: 'input)
             (workflow: WorkflowDef<'input, 'output>)
             : Task<'output> =
             task {
-                // Compile to MAF workflow with durable context
-                let mafWorkflow = toMAF ctx workflow
+                match workflow.Steps with
+                | [] -> return failwith "Workflow must have at least one step"
+                | steps ->
+                    // Create executors for all steps
+                    let executors = steps |> List.mapi (fun i step -> selectExecutor<'output> i step)
 
-                // Run via InProcessExecution
-                let! execution = MAFInProcessExecution.RunAsync(mafWorkflow, input :> obj)
-                use _ = execution
+                    // Execute each step in sequence, passing ctx at execution time
+                    let mutable currentInput: obj = box input
+                    for executor in executors do
+                        let! result = executor.ExecuteAsync(ctx, currentInput)
+                        currentInput <- result
 
-                // Find the last ExecutorCompletedEvent - it should be the workflow output
-                let mutable lastResult: obj option = None
-                for evt in execution.NewEvents do
-                    match evt with
-                    | :? MAFExecutorCompletedEvent as completed ->
-                        lastResult <- Some completed.Data
-                    | _ -> ()
-
-                match lastResult with
-                | Some data -> return convertToOutput<'output> data
-                | None -> return failwith "Workflow did not produce output. No ExecutorCompletedEvent found."
+                    // Convert final result to output type
+                    return convertToOutput<'output> currentInput
             }
 
 
