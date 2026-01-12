@@ -8,6 +8,7 @@ open Microsoft.Extensions.Configuration
 [<EntryPoint>] 
 let main args =
     HostBuilder()
+        .ConfigureFunctionsWorkerDefaults() // this wires up the Functions host correctly
         .ConfigureAppConfiguration(fun context config -> 
             config
                 .AddJsonFile("local.settings.json", optional = true, reloadOnChange = true)
