@@ -27,6 +27,20 @@ type WorkflowStep =
     | WithFallback of inner: WorkflowStep * fallbackId: string * fallback: (obj -> WorkflowContext -> Task<obj>)
 
 
+/// This is a temporary module to begin our large refactor of WorkflowStep to a typed version.
+module ``Refactor CE to preserve types`` =
+    /// The ultimate goal is to replace WorkflowStep with this version that preserves input/output types.
+    /// (But we will still keep the `WorkflowStep` name when we replace it with this typed version, to minimize disruption.)
+    type TypedWorkflowStep<'input, 'output> =
+        | Step of durableId: string * name: string * execute: ('input -> WorkflowContext -> Task<'output>)
+        | Route of durableId: string * router: ('input -> WorkflowContext -> Task<'output>)
+        | Parallel of branches: (string * TypedWorkflowStep<'input, 'output>) list
+        | AwaitEvent of durableId: string * eventName: string   // 'input = unit, 'output = 'event
+        | Delay of durableId: string * duration: TimeSpan       // 'input = unit, 'output = unit
+        | WithRetry of inner: TypedWorkflowStep<'input, 'output> * maxRetries: int
+        | WithTimeout of inner: TypedWorkflowStep<'input, 'output> * timeout: TimeSpan
+        | WithFallback of inner: TypedWorkflowStep<'input, 'output> * fallbackId: string * fallback: TypedWorkflowStep<'input, 'output>
+
 /// A workflow step type that unifies Task functions, Async functions, TypedAgents, Executors, and nested Workflows.
 /// This enables clean workflow syntax and mixed-type fanOut operations.
 type Step<'i, 'o> =
