@@ -53,6 +53,40 @@ let analysisWorkflow = workflow {
 
 ---
 
+## 🚀 Durable Workflows in Azure (Minimal Example)
+
+Agent.NET workflows run anywhere — in‑memory for local execution, or durably on Azure using Durable Functions.  
+This is the entire hosting surface:
+
+```fsharp
+/// A durable workflow defined with Agent.NET
+let tradeApprovalWorkflow =
+    workflow {
+        name "TradeApprovalWorkflow"
+        step analyzeStock
+        step sendForApproval
+        awaitEvent "TradeApproval" eventOf<ApprovalDecision>
+        step executeTrade
+    }
+
+/// Azure Durable Functions orchestrator hosting the workflow
+[<Function("TradeApprovalOrchestrator")>]
+let orchestrator ([<OrchestrationTrigger>] ctx) =
+    let request = ctx.GetInput<TradeRequest>()
+    tradeApprovalWorkflow
+    |> Workflow.Durable.run ctx request
+```
+
+This is the final shape:  
+- **Declarative workflow definition**  
+- **Typed steps** (plain .NET functions)  
+- **Explicit suspension** via `awaitEvent`  
+- **Durable execution** powered by MAF and Azure Durable Functions  
+- **Minimal host surface** — the orchestrator simply runs the workflow  
+
+
+---
+
 ## What's Included
 
 | Feature | Description |
