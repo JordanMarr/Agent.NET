@@ -18,13 +18,15 @@ module Workflow =
         let containsDurableOperations (workflow: WorkflowDef<'input, 'output>) : bool =
             let rec hasDurableOps step =
                 match step with
-                | AwaitEvent (_, _, _) -> true
-                | Delay _ -> true
-                | WithRetry (inner, _) -> hasDurableOps inner
-                | WithTimeout (inner, _) -> hasDurableOps inner
-                | WithFallback (inner, _, _) -> hasDurableOps inner
+                | WorkflowStep.AwaitEvent (_, _, _) -> true
+                | WorkflowStep.Delay _ -> true
+                | WorkflowStep.WithRetry (inner, _) -> hasDurableOps inner
+                | WorkflowStep.WithTimeout (inner, _) -> hasDurableOps inner
+                | WorkflowStep.WithFallback (inner, _, _) -> hasDurableOps inner
                 | _ -> false
-            workflow.Steps |> List.exists hasDurableOps
+            // Compile typed steps to check for durable operations
+            let steps = PackedTypedStep.compileAll workflow.TypedSteps
+            steps |> List.exists hasDurableOps
 
         /// Validates that a workflow can run in-process (no durable-only operations).
         /// Throws if durable-only operations are detected.
@@ -37,18 +39,18 @@ module Workflow =
         /// Collects all step functions that need to be registered as activities.
         let rec private collectActivities (step: WorkflowStep) : (string * (obj -> Task<obj>)) list =
             match step with
-            | Step (durableId, _, execute) ->
+            | WorkflowStep.Step (durableId, _, execute) ->
                 [(durableId, fun input -> execute input (WorkflowContext.create()))]
-            | Route (durableId, router) ->
+            | WorkflowStep.Route (durableId, router) ->
                 [(durableId, fun input -> router input (WorkflowContext.create()))]
-            | Parallel branches ->
+            | WorkflowStep.Parallel branches ->
                 branches |> List.map (fun (id, exec) ->
                     (id, fun input -> exec input (WorkflowContext.create())))
-            | AwaitEvent (_, _, _) | Delay _ ->
+            | WorkflowStep.AwaitEvent (_, _, _) | WorkflowStep.Delay _ ->
                 []  // Not activities - handled by DTFx primitives
-            | WithRetry (inner, _) | WithTimeout (inner, _) ->
+            | WorkflowStep.WithRetry (inner, _) | WorkflowStep.WithTimeout (inner, _) ->
                 collectActivities inner
-            | WithFallback (inner, fallbackId, fallbackFn) ->
+            | WorkflowStep.WithFallback (inner, fallbackId, fallbackFn) ->
                 let innerActivities = collectActivities inner
                 let fallback = (fallbackId, fun input -> fallbackFn input (WorkflowContext.create()))
                 innerActivities @ [fallback]
@@ -57,7 +59,9 @@ module Workflow =
         /// Returns a list of (activityName, executeFunction) pairs.
         let getActivities<'input, 'output> (workflow: WorkflowDef<'input, 'output>)
             : (string * (obj -> Task<obj>)) list =
-            workflow.Steps
+            // Compile typed steps to get activities
+            let steps = PackedTypedStep.compileAll workflow.TypedSteps
+            steps
             |> List.collect collectActivities
             |> List.distinctBy fst
 
@@ -76,8 +80,8 @@ module Workflow =
         /// Extracts and wraps the execute function from a WorkflowStep.
         let rec private extractAndWrapFunc (step: WorkflowStep) : Func<obj, Task<obj>> =
             match step with
-            | Step (_, _, execute) -> wrapWithContext execute
-            | Route (_, router) -> wrapWithContext router
+            | WorkflowStep.Step (_, _, execute) -> wrapWithContext execute
+            | WorkflowStep.Route (_, router) -> wrapWithContext router
             | _ -> failwith "Cannot extract execute function from this step type for resilience wrapper"
 
         /// Pure executor selection - NO durable primitives called here.
@@ -88,15 +92,15 @@ module Workflow =
             (step: WorkflowStep)
             : IExecutor =
             match step with
-            | Step (durableId, _, execute) ->
+            | WorkflowStep.Step (durableId, _, execute) ->
                 // Wrap with WorkflowContext and pass to C#
                 ExecutorFactory.CreateStepExecutor(durableId, stepIndex, wrapWithContext execute)
 
-            | Route (durableId, router) ->
+            | WorkflowStep.Route (durableId, router) ->
                 // Wrap with WorkflowContext and pass to C#
                 ExecutorFactory.CreateStepExecutor(durableId, stepIndex, wrapWithContext router)
 
-            | Parallel branches ->
+            | WorkflowStep.Parallel branches ->
                 // Wrap each branch with WorkflowContext and pass to C#
                 let branchFns =
                     branches
@@ -106,7 +110,7 @@ module Workflow =
                 ExecutorFactory.CreateParallelExecutor(parallelId, stepIndex, branchFns)
 
             // Durable operations - durable primitives invoked inside ExecuteAsync
-            | AwaitEvent (durableId, eventName, eventType) ->
+            | WorkflowStep.AwaitEvent (durableId, eventName, eventType) ->
                 // Use reflection to call the generic method with the correct event type
                 let method =
                     typeof<ExecutorFactory>
@@ -114,19 +118,19 @@ module Workflow =
                         .MakeGenericMethod(eventType)
                 method.Invoke(null, [| durableId; eventName; stepIndex |]) :?> IExecutor
 
-            | Delay (durableId, duration) ->
+            | WorkflowStep.Delay (durableId, duration) ->
                 ExecutorFactory.CreateDelayExecutor(durableId, duration, stepIndex)
 
             // Resilience wrappers
-            | WithRetry (inner, maxRetries) ->
+            | WorkflowStep.WithRetry (inner, maxRetries) ->
                 let innerFunc = extractAndWrapFunc inner
                 ExecutorFactory.CreateRetryExecutor($"Retry_{stepIndex}", maxRetries, stepIndex, innerFunc)
 
-            | WithTimeout (inner, timeout) ->
+            | WorkflowStep.WithTimeout (inner, timeout) ->
                 let innerFunc = extractAndWrapFunc inner
                 ExecutorFactory.CreateTimeoutExecutor($"Timeout_{stepIndex}", timeout, stepIndex, innerFunc)
 
-            | WithFallback (inner, fallbackId, fallback) ->
+            | WorkflowStep.WithFallback (inner, fallbackId, fallback) ->
                 let innerFunc = extractAndWrapFunc inner
                 let fallbackFunc = wrapWithContext fallback
                 ExecutorFactory.CreateFallbackExecutor($"Fallback_{stepIndex}", fallbackId, stepIndex, innerFunc, fallbackFunc)
@@ -169,7 +173,9 @@ module Workflow =
             (workflow: WorkflowDef<'input, 'output>)
             : Task<'output> =
             task {
-                match workflow.Steps with
+                // Compile typed steps to erased WorkflowSteps
+                let steps = PackedTypedStep.compileAll workflow.TypedSteps
+                match steps with
                 | [] -> return failwith "Workflow must have at least one step"
                 | steps ->
                     // Create executors for all steps

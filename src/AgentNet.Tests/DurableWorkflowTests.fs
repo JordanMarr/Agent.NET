@@ -20,7 +20,7 @@ let ``awaitEvent creates AwaitEvent step in workflow``() =
     }
 
     // Assert: Workflow has 2 steps
-    durableWorkflow.Steps.Length =! 2
+    durableWorkflow.TypedSteps.Length =! 2
 
 [<Test>]
 let ``delay creates Delay step in workflow``() =
@@ -31,7 +31,7 @@ let ``delay creates Delay step in workflow``() =
     }
 
     // Assert: Workflow has 2 steps
-    durableWorkflow.Steps.Length =! 2
+    durableWorkflow.TypedSteps.Length =! 2
 
 [<Test>]
 let ``awaitEvent and delay can be combined``() =
@@ -44,7 +44,7 @@ let ``awaitEvent and delay can be combined``() =
     }
 
     // Assert: Workflow has 3 steps
-    durableWorkflow.Steps.Length =! 3
+    durableWorkflow.TypedSteps.Length =! 3
 
 [<Test>]
 let ``runInProcess fails for workflow with awaitEvent``() =
@@ -154,7 +154,7 @@ let ``awaitEvent type flows to next step``() =
     }
 
     // Assert: Workflow has 3 steps and compiles correctly
-    durableWorkflow.Steps.Length =! 3
+    durableWorkflow.TypedSteps.Length =! 3
 
 [<Test>]
 let ``Resilience ops work fine without durable ops via runInProcess``() =

@@ -12,7 +12,7 @@ type MAFWorkflowBuilder = Microsoft.Agents.AI.Workflows.WorkflowBuilder
 type MAFInProcessExecution = Microsoft.Agents.AI.Workflows.InProcessExecution
 type MAFExecutorCompletedEvent = Microsoft.Agents.AI.Workflows.ExecutorCompletedEvent
 
-/// A step in a workflow pipeline (untyped, internal)
+/// A step in a workflow pipeline (untyped, internal - used by execution layer)
 type WorkflowStep =
     | Step of durableId: string * name: string * execute: (obj -> WorkflowContext -> Task<obj>)
     | Route of durableId: string * router: (obj -> WorkflowContext -> Task<obj>)
@@ -26,24 +26,30 @@ type WorkflowStep =
     | WithTimeout of inner: WorkflowStep * timeout: TimeSpan
     | WithFallback of inner: WorkflowStep * fallbackId: string * fallback: (obj -> WorkflowContext -> Task<obj>)
 
+/// A typed workflow step that preserves input/output type information.
+/// This is the primary AST emitted by the CE builder.
+/// The execution layer compiles this to WorkflowStep before running.
+type TypedWorkflowStep<'input, 'output> =
+    | Step of durableId: string * name: string * execute: ('input -> WorkflowContext -> Task<'output>)
+    | Route of durableId: string * router: ('input -> WorkflowContext -> Task<'output>)
+    | Parallel of branches: (string * TypedWorkflowStep<'input, 'output>) list
+    | AwaitEvent of durableId: string * eventName: string   // 'input = unit, 'output = 'event
+    | Delay of durableId: string * duration: TimeSpan       // 'input = unit, 'output = unit
+    | WithRetry of inner: TypedWorkflowStep<'input, 'output> * maxRetries: int
+    | WithTimeout of inner: TypedWorkflowStep<'input, 'output> * timeout: TimeSpan
+    | WithFallback of inner: TypedWorkflowStep<'input, 'output> * fallbackId: string * fallback: TypedWorkflowStep<'input, 'output>
 
-/// This is a temporary module to begin our large refactor of WorkflowStep to a typed version.
-module ``Refactor CE to preserve types`` =
-    /// The ultimate goal is to replace WorkflowStep with this version that preserves input/output types.
-    /// (But we will still keep the `WorkflowStep` name when we replace it with this typed version, to minimize disruption.)
-    type TypedWorkflowStep<'input, 'output> =
-        | Step of durableId: string * name: string * execute: ('input -> WorkflowContext -> Task<'output>)
-        | Route of durableId: string * router: ('input -> WorkflowContext -> Task<'output>)
-        | Parallel of branches: (string * TypedWorkflowStep<'input, 'output>) list
-        | AwaitEvent of durableId: string * eventName: string   // 'input = unit, 'output = 'event
-        | Delay of durableId: string * duration: TimeSpan       // 'input = unit, 'output = unit
-        | WithRetry of inner: TypedWorkflowStep<'input, 'output> * maxRetries: int
-        | WithTimeout of inner: TypedWorkflowStep<'input, 'output> * timeout: TimeSpan
-        | WithFallback of inner: TypedWorkflowStep<'input, 'output> * fallbackId: string * fallback: TypedWorkflowStep<'input, 'output>
+/// Wrapper that captures a typed step and its compile function.
+/// This allows storing heterogeneous TypedWorkflowStep<'i,'o> values in a list.
+type PackedTypedStep = {
+    _compile: unit -> WorkflowStep
+}
+with
+    member this.Compile() = this._compile()
 
 /// A workflow step type that unifies Task functions, Async functions, TypedAgents, Executors, and nested Workflows.
 /// This enables clean workflow syntax and mixed-type fanOut operations.
-type Step<'i, 'o> =
+and Step<'i, 'o> =
     | TaskStep of ('i -> Task<'o>)
     | AsyncStep of ('i -> Async<'o>)
     | AgentStep of TypedAgent<'i, 'o>
@@ -54,8 +60,8 @@ type Step<'i, 'o> =
 and WorkflowDef<'input, 'output> = {
     /// Optional name for the workflow (required for MAF compilation)
     Name: string option
-    /// The steps in the workflow, in order
-    Steps: WorkflowStep list
+    /// The typed steps in the workflow (packed for heterogeneous storage)
+    TypedSteps: PackedTypedStep list
 }
 
 
@@ -73,8 +79,97 @@ type StepConv = StepConv with
 /// Internal state carrier that threads type information through the builder
 type WorkflowState<'input, 'output> = {
     Name: string option
-    Steps: WorkflowStep list
+    /// Packed typed steps - each captures its compile function
+    PackedSteps: PackedTypedStep list
 }
+
+
+/// Compiles TypedWorkflowStep to erased WorkflowStep for execution.
+/// This is the bridge between the typed CE output and the existing execution layer.
+module TypedWorkflowCompiler =
+
+    /// Compiles a single TypedWorkflowStep to an erased WorkflowStep.
+    /// Uses type information to eliminate reflection where possible.
+    let rec compileStep<'input, 'output> (typedStep: TypedWorkflowStep<'input, 'output>) : WorkflowStep =
+        match typedStep with
+        | TypedWorkflowStep.Step (durableId, name, execute) ->
+            // Wrap the typed execute function with obj erasure
+            WorkflowStep.Step (durableId, name, fun input ctx -> task {
+                let typedInput = input :?> 'input
+                let! result = execute typedInput ctx
+                return result :> obj
+            })
+
+        | TypedWorkflowStep.Route (durableId, router) ->
+            // Wrap the typed router with obj erasure
+            WorkflowStep.Route (durableId, fun input ctx -> task {
+                let typedInput = input :?> 'input
+                let! result = router typedInput ctx
+                return result :> obj
+            })
+
+        | TypedWorkflowStep.Parallel branches ->
+            // Compile each branch and create erased parallel step
+            let erasedBranches =
+                branches
+                |> List.map (fun (branchId, branchStep) ->
+                    match branchStep with
+                    | TypedWorkflowStep.Step (_, _, execute) ->
+                        let executor = fun (input: obj) (ctx: WorkflowContext) -> task {
+                            let typedInput = input :?> 'input
+                            let! result = execute typedInput ctx
+                            return result :> obj
+                        }
+                        (branchId, executor)
+                    | _ ->
+                        failwith "Parallel branches must be Step nodes")
+            WorkflowStep.Parallel erasedBranches
+
+        | TypedWorkflowStep.AwaitEvent (durableId, eventName) ->
+            // Use compile-time type info to create the erased step with the correct event type
+            // This eliminates reflection - we know 'output is the event type
+            WorkflowStep.AwaitEvent (durableId, eventName, typeof<'output>)
+
+        | TypedWorkflowStep.Delay (durableId, duration) ->
+            WorkflowStep.Delay (durableId, duration)
+
+        | TypedWorkflowStep.WithRetry (inner, maxRetries) ->
+            let compiledInner = compileStep inner
+            WorkflowStep.WithRetry (compiledInner, maxRetries)
+
+        | TypedWorkflowStep.WithTimeout (inner, timeout) ->
+            let compiledInner = compileStep inner
+            WorkflowStep.WithTimeout (compiledInner, timeout)
+
+        | TypedWorkflowStep.WithFallback (inner, fallbackId, fallbackStep) ->
+            let compiledInner = compileStep inner
+            let compiledFallback = compileStep fallbackStep
+            // Extract the fallback executor function from the compiled step
+            match compiledFallback with
+            | WorkflowStep.Step (_, _, fallbackExec) ->
+                WorkflowStep.WithFallback (compiledInner, fallbackId, fallbackExec)
+            | _ ->
+                failwith "Fallback must compile to a Step"
+
+    /// Compiles a list of TypedWorkflowSteps to erased WorkflowSteps.
+    /// This is the main entry point for the compiler.
+    let compile<'input, 'output> (typedSteps: TypedWorkflowStep<'input, 'output> list) : WorkflowStep list =
+        typedSteps |> List.map compileStep
+
+
+/// Functions for packing typed steps into existential wrappers
+module PackedTypedStep =
+    /// Packs a TypedWorkflowStep into a PackedTypedStep, capturing its compile function.
+    let pack<'i, 'o> (typedStep: TypedWorkflowStep<'i, 'o>) : PackedTypedStep =
+        { _compile = fun () -> TypedWorkflowCompiler.compileStep typedStep }
+
+    /// Compiles a packed step to an erased WorkflowStep
+    let compile (packed: PackedTypedStep) : WorkflowStep =
+        packed.Compile()
+
+    /// Compiles a list of packed steps to erased WorkflowSteps
+    let compileAll (packedSteps: PackedTypedStep list) : WorkflowStep list =
+        packedSteps |> List.map compile
 
 
 /// Module for workflow building internals (public for inline SRTP support)
@@ -85,23 +180,23 @@ module WorkflowInternal =
     let rec executeStep (step: WorkflowStep) (input: obj) (ctx: WorkflowContext) : Task<obj> =
         task {
             match step with
-            | Step (_, _, execute) ->
+            | WorkflowStep.Step (_, _, execute) ->
                 return! execute input ctx
-            | Route (_, router) ->
+            | WorkflowStep.Route (_, router) ->
                 return! router input ctx
-            | Parallel branches ->
+            | WorkflowStep.Parallel branches ->
                 let! results =
                     branches
                     |> List.map (fun (_, exec) -> exec input ctx)
                     |> Task.WhenAll
                 return (results |> Array.toList) :> obj
             // Durable-only operations - fail in in-process execution
-            | AwaitEvent (durableId, _, _) ->
+            | WorkflowStep.AwaitEvent (durableId, _, _) ->
                 return failwith $"AwaitEvent '{durableId}' requires durable runtime. Use Workflow.Durable.run instead of Workflow.InProcess.run."
-            | Delay (_, duration) ->
+            | WorkflowStep.Delay (_, duration) ->
                 return failwith $"Delay ({duration}) requires durable runtime. Use Workflow.Durable.run instead of Workflow.InProcess.run."
             // Resilience wrappers - work in in-process execution
-            | WithRetry (inner, maxRetries) ->
+            | WorkflowStep.WithRetry (inner, maxRetries) ->
                 let rec retry attempt =
                     task {
                         try
@@ -110,7 +205,7 @@ module WorkflowInternal =
                             return! retry (attempt + 1)
                     }
                 return! retry 0
-            | WithTimeout (inner, timeout) ->
+            | WorkflowStep.WithTimeout (inner, timeout) ->
                 let execution = executeStep inner input ctx
                 let timeoutTask = Task.Delay(timeout)
                 let! winner = Task.WhenAny(execution, timeoutTask)
@@ -118,7 +213,7 @@ module WorkflowInternal =
                     return raise (TimeoutException($"Step timed out after {timeout}"))
                 else
                     return! execution
-            | WithFallback (inner, _, fallback) ->
+            | WorkflowStep.WithFallback (inner, _, fallback) ->
                 try
                     return! executeStep inner input ctx
                 with _ ->
@@ -151,118 +246,68 @@ module WorkflowInternal =
         | _ -> ()
 
     /// Converts a Step<'i, 'o> to an Executor<'i, 'o>
-    /// Note: NestedWorkflow is handled separately in wrapStep
+    /// Note: NestedWorkflow is handled separately
     let stepToExecutor<'i, 'o> (name: string) (step: Step<'i, 'o>) : Executor<'i, 'o> =
         match step with
         | TaskStep fn -> Executor.fromTask name fn
         | AsyncStep fn -> Executor.fromAsync name fn
         | AgentStep agent -> Executor.fromTypedAgent name agent
         | ExecutorStep exec -> { exec with Name = name }
-        | NestedWorkflow _ -> failwith "NestedWorkflow should be handled in wrapStep, not stepToExecutor"
+        | NestedWorkflow _ -> failwith "NestedWorkflow should be handled separately, not in stepToExecutor"
 
-    /// Wraps a Step as an untyped WorkflowStep
-    let wrapStep<'i, 'o> (durableId: string) (name: string) (step: Step<'i, 'o>) : WorkflowStep =
+    // ============ TYPED STEP CONVERSION ============
+    // These functions convert Step<'i,'o> to TypedWorkflowStep<'i,'o>
+    // The typed steps are later compiled to erased WorkflowStep for execution
+
+    /// Converts a Step<'i, 'o> to a TypedWorkflowStep<'i, 'o>
+    let toTypedStep<'i, 'o> (durableId: string) (name: string) (step: Step<'i, 'o>) : TypedWorkflowStep<'i, 'o> =
         match step with
         | NestedWorkflow wf ->
             // Execute all nested workflow steps in sequence
-            Step (durableId, name, fun input ctx -> task {
-                let mutable current = input
-                for nestedStep in wf.Steps do
+            TypedWorkflowStep.Step (durableId, name, fun input ctx -> task {
+                let mutable current: obj = box input
+                // Compile nested typed steps to erased for execution
+                let compiledSteps = PackedTypedStep.compileAll wf.TypedSteps
+                for nestedStep in compiledSteps do
                     let! result = executeStep nestedStep current ctx
                     current <- result
-                return current
+                return current :?> 'o
             })
         | _ ->
             let exec = stepToExecutor name step
-            Step (durableId, exec.Name, fun input ctx -> task {
-                let typedInput = input :?> 'i
-                let! result = exec.Execute typedInput ctx
-                return result :> obj
-            })
+            TypedWorkflowStep.Step (durableId, name, fun input ctx -> exec.Execute input ctx)
 
-    /// Wraps a list of Steps as parallel execution (supports mixed types!)
-    /// Uses auto-generated durable IDs for each parallel branch
-    let wrapStepParallel<'i, 'o> (steps: Step<'i, 'o> list) : WorkflowStep =
+    /// Converts a list of Steps to a TypedWorkflowStep.Parallel
+    let toTypedStepParallel<'i, 'o> (steps: Step<'i, 'o> list) : TypedWorkflowStep<'i, 'o list> =
         let branches =
             steps
-            |> List.mapi (fun i step ->
+            |> List.map (fun step ->
                 let durableId = getDurableId step
                 let displayName = getDisplayName step
-                let exec = stepToExecutor displayName step
                 warnIfLambda step durableId
-                let executor = fun (input: obj) (ctx: WorkflowContext) -> task {
-                    let typedInput = input :?> 'i
-                    let! result = exec.Execute typedInput ctx
-                    return result :> obj
-                }
-                (durableId, executor))
-        Parallel branches
+                let typedStep = toTypedStep durableId displayName step
+                (durableId, typedStep))
+        // Create a parallel step that returns a list of results
+        let durableId = "Parallel_" + (branches |> List.map fst |> String.concat "_")
+        TypedWorkflowStep.Step (durableId, "Parallel", fun input ctx -> task {
+            let! results =
+                branches
+                |> List.map (fun (_, typedStep) ->
+                    match typedStep with
+                    | TypedWorkflowStep.Step (_, _, exec) -> exec input ctx
+                    | _ -> failwith "Expected Step in parallel branch")
+                |> Task.WhenAll
+            return results |> Array.toList
+        })
 
-    /// Wraps a Step as a fan-in aggregator, handling obj list → typed list conversion
-    /// Handles both F# list and C# List<object> (from MAF ParallelExecutor)
-    let wrapStepFanIn<'elem, 'o> (durableId: string) (name: string) (step: Step<'elem list, 'o>) : WorkflowStep =
+    /// Converts a Step to a TypedWorkflowStep for fan-in (aggregating parallel results)
+    let toTypedStepFanIn<'elem, 'o> (durableId: string) (name: string) (step: Step<'elem list, 'o>) : TypedWorkflowStep<'elem list, 'o> =
         let exec = stepToExecutor name step
-        Step (durableId, exec.Name, fun input ctx -> task {
-            // Input from MAF Parallel is List<object>, convert to F# list
-            let objList =
-                match input with
-                | :? System.Collections.IList as csList ->
-                    csList |> Seq.cast<obj> |> Seq.toList
-                | _ ->
-                    input :?> obj list  // Fallback for direct F# list
-            let typedList = objList |> List.map (fun o -> o :?> 'elem)
-            let! result = exec.Execute typedList ctx
-            return result :> obj
-        })
+        TypedWorkflowStep.Step (durableId, name, fun input ctx -> exec.Execute input ctx)
 
-    /// Wraps a typed executor as an untyped step
-    let wrapExecutor<'i, 'o> (durableId: string) (exec: Executor<'i, 'o>) : WorkflowStep =
-        Step (durableId, exec.Name, fun input ctx -> task {
-            let typedInput = input :?> 'i
-            let! result = exec.Execute typedInput ctx
-            return result :> obj
-        })
-
-    /// Wraps a typed router function as an untyped route step
-    /// The router takes input and returns an executor to run on that same input
-    let wrapRouter<'a, 'b> (durableId: string) (router: 'a -> Executor<'a, 'b>) : WorkflowStep =
-        Route (durableId, fun input ctx -> task {
-            let typedInput = input :?> 'a
-            let selectedExecutor = router typedInput
-            let! result = selectedExecutor.Execute typedInput ctx
-            return result :> obj
-        })
-
-    /// Wraps a list of typed executors as untyped parallel functions
-    let wrapParallel<'i, 'o> (executors: Executor<'i, 'o> list) : WorkflowStep =
-        let branches =
-            executors
-            |> List.map (fun exec ->
-                let durableId = DurableId.forExecutor exec
-                let executor = fun (input: obj) (ctx: WorkflowContext) -> task {
-                    let typedInput = input :?> 'i
-                    let! result = exec.Execute typedInput ctx
-                    return result :> obj
-                }
-                (durableId, executor))
-        Parallel branches
-
-    /// Wraps an aggregator executor, handling the obj list → typed list conversion
-    /// Handles both F# list and C# List<object> (from MAF ParallelExecutor)
-    let wrapFanIn<'elem, 'o> (exec: Executor<'elem list, 'o>) : WorkflowStep =
-        let durableId = DurableId.forExecutor exec
-        Step (durableId, exec.Name, fun input ctx -> task {
-            // Input from MAF Parallel is List<object>, convert to F# list
-            let objList =
-                match input with
-                | :? System.Collections.IList as csList ->
-                    csList |> Seq.cast<obj> |> Seq.toList
-                | _ ->
-                    input :?> obj list  // Fallback for direct F# list
-            let typedList = objList |> List.map (fun o -> o :?> 'elem)
-            let! result = exec.Execute typedList ctx
-            return result :> obj
-        })
+    /// Converts a router function to a TypedWorkflowStep.Route
+    let toTypedRouter<'a, 'b> (durableId: string) (router: 'a -> WorkflowContext -> Task<'b>) : TypedWorkflowStep<'a, 'b> =
+        TypedWorkflowStep.Route (durableId, router)
 
 
 /// Builder for the workflow computation expression
@@ -273,17 +318,17 @@ type WorkflowBuilder() =
     // No member may use wildcards (_) or erased types (obj) in WorkflowState.
 
     /// Identity workflow - produces input unchanged
-    member _.Zero() : WorkflowState<'input, 'input> = { Name = None; Steps = [] }
+    member _.Zero() : WorkflowState<'input, 'input> = { Name = None; PackedSteps = [] }
 
     /// Yields a value - for CE compatibility (workflow uses Zero primarily)
-    member _.Yield(_: unit) : WorkflowState<'input, 'input> = { Name = None; Steps = [] }
+    member _.Yield(_: unit) : WorkflowState<'input, 'input> = { Name = None; PackedSteps = [] }
 
     /// Delays evaluation - preserves phantom types exactly
     member _.Delay(f: unit -> WorkflowState<'input, 'a>) : WorkflowState<'input, 'a> = f()
 
     /// Combines two workflow states - output type comes from second state
     member _.Combine(s1: WorkflowState<'input, 'a>, s2: WorkflowState<'input, 'b>) : WorkflowState<'input, 'b> =
-        { Name = s2.Name |> Option.orElse s1.Name; Steps = s1.Steps @ s2.Steps }
+        { Name = s2.Name |> Option.orElse s1.Name; PackedSteps = s1.PackedSteps @ s2.PackedSteps }
 
     /// Sets the name of the workflow (used for MAF compilation and durable function registration)
     [<CustomOperation("name")>]
@@ -293,7 +338,7 @@ type WorkflowBuilder() =
     // ============ STEP OPERATIONS ============
     // Type threading invariant: WorkflowState<'input,'a> -> Executor<'a,'b> -> WorkflowState<'input,'b>
     // Uses inline SRTP to accept Task fn, Async fn, TypedAgent, Executor, Workflow, or Step directly.
-    // All overloads delegate to the canonical Executor<'a,'b> pattern internally.
+    // All operations create TypedWorkflowStep nodes and pack them for storage.
     // Durable IDs are auto-generated; display names come from Executor.Name if available.
     // NO WILDCARDS OR ERASED TYPES - enforced by single Step member with Zero providing initial state.
 
@@ -306,7 +351,8 @@ type WorkflowBuilder() =
         let durableId = WorkflowInternal.getDurableId step
         let displayName = WorkflowInternal.getDisplayName step
         WorkflowInternal.warnIfLambda step durableId
-        { Name = state.Name; Steps = state.Steps @ [WorkflowInternal.wrapStep durableId displayName step] }
+        let typedStep = WorkflowInternal.toTypedStep durableId displayName step
+        { Name = state.Name; PackedSteps = state.PackedSteps @ [PackedTypedStep.pack typedStep] }
 
     // ============ ROUTING ============
 
@@ -317,14 +363,17 @@ type WorkflowBuilder() =
     member inline _.Route(state: WorkflowState<'input, 'middle>, router: 'middle -> ^T) : WorkflowState<'input, 'output> =
         // Generate a durable ID for the route decision point based on input/output types
         let routeDurableId = DurableId.forRoute router
-        let wrappedRouter = fun (input: 'middle) ->
+        // Create a typed router that wraps the user's routing function
+        let typedRouterFn = fun (input: 'middle) (ctx: WorkflowContext) ->
             let result = router input
             let step : Step<'middle, 'output> =
                 ((^T or StepConv) : (static member ToStep: StepConv * ^T -> Step<'middle, 'output>) (StepConv, result))
             let displayName = WorkflowInternal.getDisplayName step
             WorkflowInternal.warnIfLambda step (WorkflowInternal.getDurableId step)
-            WorkflowInternal.stepToExecutor displayName step
-        { Name = state.Name; Steps = state.Steps @ [WorkflowInternal.wrapRouter routeDurableId wrappedRouter] }
+            let exec = WorkflowInternal.stepToExecutor displayName step
+            exec.Execute input ctx
+        let typedStep = TypedWorkflowStep.Route (routeDurableId, typedRouterFn)
+        { Name = state.Name; PackedSteps = state.PackedSteps @ [PackedTypedStep.pack typedStep] }
 
     // ============ FANOUT OPERATIONS ============
     // SRTP overloads for 2-5 arguments - no wrapper needed!
@@ -336,7 +385,8 @@ type WorkflowBuilder() =
     member inline _.FanOut(state: WorkflowState<'input, 'middle>, x1: ^A, x2: ^B) : WorkflowState<'input, 'o list> =
         let s1 : Step<'middle, 'o> = ((^A or StepConv) : (static member ToStep: StepConv * ^A -> Step<'middle, 'o>) (StepConv, x1))
         let s2 : Step<'middle, 'o> = ((^B or StepConv) : (static member ToStep: StepConv * ^B -> Step<'middle, 'o>) (StepConv, x2))
-        { Name = state.Name; Steps = state.Steps @ [WorkflowInternal.wrapStepParallel [s1; s2]] }
+        let typedStep = WorkflowInternal.toTypedStepParallel [s1; s2]
+        { Name = state.Name; PackedSteps = state.PackedSteps @ [PackedTypedStep.pack typedStep] }
 
     /// Runs 3 steps in parallel (fan-out) - SRTP resolves each argument type
     [<CustomOperation("fanOut")>]
@@ -344,7 +394,8 @@ type WorkflowBuilder() =
         let s1 : Step<'middle, 'o> = ((^A or StepConv) : (static member ToStep: StepConv * ^A -> Step<'middle, 'o>) (StepConv, x1))
         let s2 : Step<'middle, 'o> = ((^B or StepConv) : (static member ToStep: StepConv * ^B -> Step<'middle, 'o>) (StepConv, x2))
         let s3 : Step<'middle, 'o> = ((^C or StepConv) : (static member ToStep: StepConv * ^C -> Step<'middle, 'o>) (StepConv, x3))
-        { Name = state.Name; Steps = state.Steps @ [WorkflowInternal.wrapStepParallel [s1; s2; s3]] }
+        let typedStep = WorkflowInternal.toTypedStepParallel [s1; s2; s3]
+        { Name = state.Name; PackedSteps = state.PackedSteps @ [PackedTypedStep.pack typedStep] }
 
     /// Runs 4 steps in parallel (fan-out) - SRTP resolves each argument type
     [<CustomOperation("fanOut")>]
@@ -353,7 +404,8 @@ type WorkflowBuilder() =
         let s2 : Step<'middle, 'o> = ((^B or StepConv) : (static member ToStep: StepConv * ^B -> Step<'middle, 'o>) (StepConv, x2))
         let s3 : Step<'middle, 'o> = ((^C or StepConv) : (static member ToStep: StepConv * ^C -> Step<'middle, 'o>) (StepConv, x3))
         let s4 : Step<'middle, 'o> = ((^D or StepConv) : (static member ToStep: StepConv * ^D -> Step<'middle, 'o>) (StepConv, x4))
-        { Name = state.Name; Steps = state.Steps @ [WorkflowInternal.wrapStepParallel [s1; s2; s3; s4]] }
+        let typedStep = WorkflowInternal.toTypedStepParallel [s1; s2; s3; s4]
+        { Name = state.Name; PackedSteps = state.PackedSteps @ [PackedTypedStep.pack typedStep] }
 
     /// Runs 5 steps in parallel (fan-out) - SRTP resolves each argument type
     [<CustomOperation("fanOut")>]
@@ -363,12 +415,14 @@ type WorkflowBuilder() =
         let s3 : Step<'middle, 'o> = ((^C or StepConv) : (static member ToStep: StepConv * ^C -> Step<'middle, 'o>) (StepConv, x3))
         let s4 : Step<'middle, 'o> = ((^D or StepConv) : (static member ToStep: StepConv * ^D -> Step<'middle, 'o>) (StepConv, x4))
         let s5 : Step<'middle, 'o> = ((^E or StepConv) : (static member ToStep: StepConv * ^E -> Step<'middle, 'o>) (StepConv, x5))
-        { Name = state.Name; Steps = state.Steps @ [WorkflowInternal.wrapStepParallel [s1; s2; s3; s4; s5]] }
+        let typedStep = WorkflowInternal.toTypedStepParallel [s1; s2; s3; s4; s5]
+        { Name = state.Name; PackedSteps = state.PackedSteps @ [PackedTypedStep.pack typedStep] }
 
     /// Runs multiple steps in parallel (fan-out) - for 6+ branches, use '+' operator
     [<CustomOperation("fanOut")>]
     member _.FanOut(state: WorkflowState<'input, 'middle>, steps: Step<'middle, 'o> list) : WorkflowState<'input, 'o list> =
-        { Name = state.Name; Steps = state.Steps @ [WorkflowInternal.wrapStepParallel steps] }
+        let typedStep = WorkflowInternal.toTypedStepParallel steps
+        { Name = state.Name; PackedSteps = state.PackedSteps @ [PackedTypedStep.pack typedStep] }
 
     // ============ FANIN OPERATIONS ============
     // Uses inline SRTP to accept Task fn, Async fn, TypedAgent, Executor, or Step directly
@@ -381,30 +435,36 @@ type WorkflowBuilder() =
         let durableId = WorkflowInternal.getDurableId step
         let displayName = WorkflowInternal.getDisplayName step
         WorkflowInternal.warnIfLambda step durableId
-        { Name = state.Name; Steps = state.Steps @ [WorkflowInternal.wrapStepFanIn durableId displayName step] }
+        let typedStep = WorkflowInternal.toTypedStepFanIn durableId displayName step
+        { Name = state.Name; PackedSteps = state.PackedSteps @ [PackedTypedStep.pack typedStep] }
 
     // ============ RESILIENCE OPERATIONS ============
     // These wrap the preceding step with retry, timeout, or fallback behavior
+    // Resilience wrappers modify the last packed step to include the wrapping
 
     /// Wraps the previous step with retry logic. On failure, retries up to maxRetries times.
     [<CustomOperation("retry")>]
     member _.Retry(state: WorkflowState<'input, 'output>, maxRetries: int) : WorkflowState<'input, 'output> =
-        match state.Steps with
+        match state.PackedSteps with
         | [] -> failwith "retry requires a preceding step"
-        | steps ->
-            let allButLast = steps |> List.take (steps.Length - 1)
-            let last = steps |> List.last
-            { Name = state.Name; Steps = allButLast @ [WithRetry(last, maxRetries)] }
+        | packedSteps ->
+            let allButLast = packedSteps |> List.take (packedSteps.Length - 1)
+            let lastPacked = packedSteps |> List.last
+            // Create a new packed step that wraps the compiled inner step with retry
+            let wrappedPacked = { _compile = fun () -> WorkflowStep.WithRetry(lastPacked.Compile(), maxRetries) }
+            { Name = state.Name; PackedSteps = allButLast @ [wrappedPacked] }
 
     /// Wraps the previous step with a timeout. Fails with TimeoutException if duration exceeded.
     [<CustomOperation("timeout")>]
     member _.Timeout(state: WorkflowState<'input, 'output>, duration: TimeSpan) : WorkflowState<'input, 'output> =
-        match state.Steps with
+        match state.PackedSteps with
         | [] -> failwith "timeout requires a preceding step"
-        | steps ->
-            let allButLast = steps |> List.take (steps.Length - 1)
-            let last = steps |> List.last
-            { Name = state.Name; Steps = allButLast @ [WithTimeout(last, duration)] }
+        | packedSteps ->
+            let allButLast = packedSteps |> List.take (packedSteps.Length - 1)
+            let lastPacked = packedSteps |> List.last
+            // Create a new packed step that wraps the compiled inner step with timeout
+            let wrappedPacked = { _compile = fun () -> WorkflowStep.WithTimeout(lastPacked.Compile(), duration) }
+            { Name = state.Name; PackedSteps = allButLast @ [wrappedPacked] }
 
     /// Wraps the previous step with a fallback. On failure, executes the fallback step instead.
     [<CustomOperation("fallback")>]
@@ -420,16 +480,18 @@ type WorkflowBuilder() =
                 let! result = exec.Execute typedInput ctx
                 return result :> obj
             }
-        match state.Steps with
+        match state.PackedSteps with
         | [] -> failwith "fallback requires a preceding step"
-        | steps ->
-            let allButLast = steps |> List.take (steps.Length - 1)
-            let last = steps |> List.last
-            { Name = state.Name; Steps = allButLast @ [WithFallback(last, durableId, fallbackExec)] }
+        | packedSteps ->
+            let allButLast = packedSteps |> List.take (packedSteps.Length - 1)
+            let lastPacked = packedSteps |> List.last
+            // Create a new packed step that wraps the compiled inner step with fallback
+            let wrappedPacked = { _compile = fun () -> WorkflowStep.WithFallback(lastPacked.Compile(), durableId, fallbackExec) }
+            { Name = state.Name; PackedSteps = allButLast @ [wrappedPacked] }
 
     /// Builds the final workflow definition
     member _.Run(state: WorkflowState<'input, 'output>) : WorkflowDef<'input, 'output> =
-        { Name = state.Name; Steps = state.Steps }
+        { Name = state.Name; TypedSteps = state.PackedSteps }
 
 
 module Task = 
@@ -466,7 +528,7 @@ module Workflow =
         /// The stepIndex is used to ensure unique executor IDs within a workflow.
         let rec private toMAFExecutor (stepIndex: int) (step: WorkflowStep) : MAFExecutor =
             match step with
-            | Step (durableId, _, execute) ->
+            | WorkflowStep.Step (durableId, _, execute) ->
                 // Wrap the execute function, creating an AgentNet context for execution
                 // Combine durableId with stepIndex to ensure uniqueness within workflow
                 let executorId = $"{durableId}_{stepIndex}"
@@ -475,7 +537,7 @@ module Workflow =
                     execute input ctx)
                 ExecutorFactory.CreateStep(executorId, fn)
 
-            | Route (durableId, router) ->
+            | WorkflowStep.Route (durableId, router) ->
                 // Router selects and executes the appropriate branch
                 // Combine durableId with stepIndex to ensure uniqueness
                 let executorId = $"{durableId}_{stepIndex}"
@@ -484,7 +546,7 @@ module Workflow =
                     router input ctx)
                 ExecutorFactory.CreateStep(executorId, fn)
 
-            | Parallel branches ->
+            | WorkflowStep.Parallel branches ->
                 // Create parallel executor from branches
                 let branchFns =
                     branches
@@ -498,13 +560,13 @@ module Workflow =
                 ExecutorFactory.CreateParallel(parallelId, branchFns)
 
             // Durable-only operations - cannot be compiled for in-process MAF execution
-            | AwaitEvent (durableId, _, _) ->
+            | WorkflowStep.AwaitEvent (durableId, _, _) ->
                 failwith $"AwaitEvent '{durableId}' cannot be compiled for in-process execution. Use Workflow.Durable.run instead."
-            | Delay (_, duration) ->
+            | WorkflowStep.Delay (_, duration) ->
                 failwith $"Delay ({duration}) cannot be compiled for in-process execution. Use Workflow.Durable.run instead."
 
             // Resilience wrappers - compile by wrapping the inner step execution
-            | WithRetry (inner, maxRetries) ->
+            | WorkflowStep.WithRetry (inner, maxRetries) ->
                 let executorId = $"WithRetry_{stepIndex}_{maxRetries}"
                 let fn = Func<obj, Task<obj>>(fun input ->
                     let ctx = WorkflowContext.create()
@@ -518,7 +580,7 @@ module Workflow =
                     retry 0)
                 ExecutorFactory.CreateStep(executorId, fn)
 
-            | WithTimeout (inner, timeout) ->
+            | WorkflowStep.WithTimeout (inner, timeout) ->
                 let executorId = $"WithTimeout_{stepIndex}_{int timeout.TotalMilliseconds}ms"
                 let fn = Func<obj, Task<obj>>(fun input ->
                     task {
@@ -533,7 +595,7 @@ module Workflow =
                     })
                 ExecutorFactory.CreateStep(executorId, fn)
 
-            | WithFallback (inner, fallbackId, fallback) ->
+            | WorkflowStep.WithFallback (inner, fallbackId, fallback) ->
                 let executorId = $"WithFallback_{stepIndex}_{fallbackId}"
                 let fn = Func<obj, Task<obj>>(fun input ->
                     task {
@@ -550,7 +612,9 @@ module Workflow =
         /// If no name is set, uses "Workflow" as the default name.
         let toMAF<'input, 'output> (workflow: WorkflowDef<'input, 'output>) : MAFWorkflow =
             let name = workflow.Name |> Option.defaultValue "Workflow"
-            match workflow.Steps with
+            // Compile typed steps to erased WorkflowSteps
+            let steps = PackedTypedStep.compileAll workflow.TypedSteps
+            match steps with
             | [] -> failwith "Workflow must have at least one step"
             | steps ->
                 // Create executors for all steps with unique indices

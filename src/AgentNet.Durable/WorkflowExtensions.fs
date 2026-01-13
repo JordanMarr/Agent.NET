@@ -52,8 +52,9 @@ type WorkflowBuilder with
 
         let durableId = $"AwaitEvent_{eventName}_{eventType.Name}"
 
-        // Store metadata only - durable primitive is invoked in toMAFExecutor
-        { Name = state.Name; Steps = state.Steps @ [AwaitEvent(durableId, eventName, eventType)] }
+        // Create a typed step and pack it
+        let typedStep : TypedWorkflowStep<unit, 'event> = TypedWorkflowStep.AwaitEvent(durableId, eventName)
+        { Name = state.Name; PackedSteps = state.PackedSteps @ [PackedTypedStep.pack typedStep] }
 
     /// Delays the workflow for the specified duration.
     /// The workflow is checkpointed and suspended during the delay.
@@ -61,4 +62,6 @@ type WorkflowBuilder with
     [<CustomOperation("delayFor")>]
     member _.DelayFor(state: WorkflowState<'input, 'output>, duration: TimeSpan) : WorkflowState<'input, 'output> =
         let durableId = $"Delay_{int duration.TotalMilliseconds}ms"
-        { Name = state.Name; Steps = state.Steps @ [Delay(durableId, duration)] }
+        // Create a typed step and pack it
+        let typedStep : TypedWorkflowStep<'output, 'output> = TypedWorkflowStep.Delay(durableId, duration)
+        { Name = state.Name; PackedSteps = state.PackedSteps @ [PackedTypedStep.pack typedStep] }
