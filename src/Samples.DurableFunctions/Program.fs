@@ -1,23 +1,23 @@
 module Samples.DurableFunctions.Program
 
-open System
 open Microsoft.Extensions.Hosting
 open Microsoft.Azure.Functions.Worker
-open Microsoft.Extensions.Configuration 
+open Microsoft.Azure.Functions.Worker.Extensions.DurableTask
+open Microsoft.Extensions.Configuration
 
-[<EntryPoint>] 
+[<EntryPoint>]
 let main args =
     HostBuilder()
-        .ConfigureFunctionsWorkerDefaults() // this wires up the Functions host correctly
-        .ConfigureAppConfiguration(fun context config -> 
+        .ConfigureAppConfiguration(fun context config ->
             config
                 .AddJsonFile("local.settings.json", optional = true, reloadOnChange = true)
-                .AddEnvironmentVariables() 
-            |> ignore 
-        ) 
-        .ConfigureFunctionsWebApplication(Action<IFunctionsWorkerApplicationBuilder>(fun builder -> 
-            builder.ConfigureDurableExtension() |> ignore 
-        )) 
-        .Build() 
-        .Run() 
+                .AddEnvironmentVariables()
+            |> ignore
+        )
+        .ConfigureFunctionsWebApplication(fun builder ->
+            // Manually configure Durable extension since auto-discovery doesn't work with F#
+            builder.ConfigureDurableExtension() |> ignore
+        )
+        .Build()
+        .Run()
     0

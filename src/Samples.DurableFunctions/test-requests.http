@@ -10,7 +10,7 @@
 ### Save the instanceId from the response for use in subsequent requests.
 
 POST {{baseUrl}}/trade/start
-Content-Type: application/json
+Content-Type: application/json; charset=utf-8
 
 {
     "Symbol": "MSFT",
@@ -23,7 +23,7 @@ Content-Type: application/json
 ### Replace {instanceId} with the actual instance ID from step 1.
 ### Status will be "Running" while waiting for approval.
 
-@instanceId = 243a60811ace4eb7bbeef98a8bf46365
+@instanceId = 84122c69f87d4261ad828fd2f6a9d6a5
 
 GET {{baseUrl}}/trade/{{instanceId}}/status
 
