@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <OutputType>Library</OutputType>
@@ -26,8 +26,15 @@
 
   <ItemGroup>
     <ProjectReference Include="..\AgentNet\AgentNet.fsproj" />
-    <ProjectReference Include="..\AgentNet.Interop\AgentNet.Interop.csproj" />
+    <ProjectReference Include="..\AgentNet.Interop\AgentNet.Interop.csproj" PrivateAssets="All" />
   </ItemGroup>
+
+  <!-- Include AgentNet.Interop in NuGet package -->
+  <Target Name="IncludeInteropInPackage" BeforeTargets="BuildOnlySettings">
+    <ItemGroup>
+      <BuildOutputInPackage Include="$(OutputPath)AgentNet.Interop.dll" />
+    </ItemGroup>
+  </Target>
 
   <ItemGroup>
     <PackageReference Include="Microsoft.DurableTask.Abstractions" Version="1.*" />
