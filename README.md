@@ -505,11 +505,7 @@ let pipeline = workflow {
     step writer
 }
 
-// Run in-memory for testing
 let! result = Workflow.InProcess.run input pipeline
-
-// Or compile to MAF for durability
-let mafWorkflow = Workflow.toMAF pipeline
 ```
 
 *Compiles to (MAF equivalent):*
@@ -730,7 +726,7 @@ let stockAnalysis = workflow {
 let! result = Workflow.InProcess.run input stockAnalysis
 
 // MAF durable execution (long-running, durable workflows)
-let mafWorkflow = Workflow.toMAF stockAnalysis
+let mafWorkflow = Workflow.Durable.run ctx request stockAnalysis
 ```
 
 ### Why a Semantic Layer?
@@ -748,12 +744,8 @@ Agent.NET supports both execution models from a single workflow definition:
 
 | Mode | API | Description |
 |------|-----|-------------|
-| **In-memory** | `Workflow.InProcess.run` | Used for short-lived workflows execut within the current process. |
-| **MAF Durable** | `Workflow.toMAF` | Compiles to MAF's durable runtime (backed by Azure Durable Functions) with automatic checkpointing, replay, and fault tolerance. |
-
-**Prefer explicit control?** Use `Workflow.InProcess.run` and integrate with your own persistence layer - databases, queues, event stores, whatever fits your architecture.
-
-**Want durable orchestration?** Use `Workflow.toMAF` to get enterprise-grade durability with one line of code. You can still use `Workflow.run` for local testing without installing the durable runtime.
+| **In-memory** | `Workflow.InProcess.run` | Used for short-lived workflows executed within the current process. |
+| **MAF Durable** | `Workflow.Durable.run` | Runs on MAF's durable runtime (backed by Azure Durable Functions) with automatic checkpointing, replay, and fault tolerance. |
 
 *Same workflow. Your choice of execution model.*
 
