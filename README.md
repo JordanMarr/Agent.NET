@@ -66,7 +66,7 @@ Agent.NET has three primary usage patterns:
    - Great for assistants and MCP-style tool calling.  
    _Learn more: [ChatAgent: pipeline-style configuration ->](#chatagent-pipeline-style-configuration)_
 
-2. **Typed agents as functions (`TypedAgent<'i,'o>`)**
+2. **Typed agents as functions (`TypedAgent<'input,'output>`)**
    - Wrap a `ChatAgent` with format/parse functions.
    - Use it anywhere you’d call a service: controllers, background jobs, workflows.  
    _Learn more: [TypedAgent: structured input/output for workflows ->](#typedagent-structured-inputoutput-for-workflows)_
@@ -102,6 +102,8 @@ You can host this workflow inside an Azure Durable Functions orchestrator writte
 F# orchestrator:
 
 ```fsharp
+module TradeApprovalWorkflow
+
 open Microsoft.DurableTask
 open Microsoft.Azure.Functions.Worker
 open AgentNet.Durable
@@ -112,7 +114,7 @@ let orchestrator ([<OrchestrationTrigger>] ctx: TaskOrchestrationContext) =
     Workflow.Durable.run ctx request tradeApprovalWorkflow
 ```
 
-Conceptual C# orchestrator calling a workflow defined in your F# project:
+C# orchestrator calling a workflow defined in your F# project:
 
 ```csharp
 using Microsoft.DurableTask;
@@ -169,54 +171,65 @@ dotnet add package AgentNet.Durable
 
 ## Quick Start
 
-### 1. Define Your Tools
+### 1. Build a ChatAgent
 
-Write normal F# functions with XML documentation (summary only or summary and params):
+Create a simple `ChatAgent` that works on strings:
 
 ```fsharp
 open AgentNet
 
-/// Gets the current weather for a city
-let getWeather (city: string) = task {
-    let! weather = WeatherApi.fetch city
-    return $"The weather in {city} is {weather}"
-}
+let summarizerAgent =
+    ChatAgent.create "You summarize articles into concise bullet points."
+    |> ChatAgent.withName "Summarizer"
+    |> ChatAgent.build chatClient   // any IChatClient implementation
 
-/// <summary>Gets the current time in a timezone</summary>
-/// <param name="timezone">The timezone (e.g., America/New_York)</param>
-let getTime (timezone: string) =
-    let time = TimeApi.now timezone
-    $"The current time is {time}"
-
-// Create tools - metadata extracted automatically!
-let weatherTool = Tool.createWithDocs <@ getWeather @>
-let timeTool =    Tool.createWithDocs <@ getTime @>
+// Shape: string -> Task<string>
+let! text = summarizerAgent.Chat("Summarize the latest quarterly report.")
 ```
 
-### 2. Create an Agent
+_Learn more: [ChatAgent: pipeline-style configuration ->](#chatagent-pipeline-style-configuration)_
+
+> `ChatAgent` values always have the shape `string -> Task<string>`. To use them inside a
+> typed workflow, you adapt them into `TypedAgent<'i,'o>` by providing format/parse functions.
+
+### 2. Wrap it as a TypedAgent
+
+Turn the string-based agent into a typed function that can be composed into the workflow:
 
 ```fsharp
-let assistant =
-    ChatAgent.create "You are a helpful assistant that provides weather and time information."
-    |> ChatAgent.withName "WeatherBot"
-    |> ChatAgent.withTools [weatherTool; timeTool]
-    |> ChatAgent.build chatClient
+// Typed domain model
+type Article = { Id: string; Title: string; Body: string }
+type Summary = { Title: string; Summary: string }
 
-// Chat with your agent
-let! response = assistant.Chat("What's the weather like in Seattle?")
+// Format typed input into a prompt
+let formatArticle (article: Article) =
+    $"Summarize the following article titled '{article.Title}':\n\n{article.Body}"
+
+// Parse the model response back into a typed result
+let parseSummary (article: Article) (response: string) : Summary =
+    { Title = article.Title; Summary = response }
+
+let typedSummarizer : TypedAgent<Article, Summary> =
+    TypedAgent.create formatArticle parseSummary summarizerAgent
 ```
 
-### 3. Orchestrate with Workflows
+_Learn more: [TypedAgent: structured input/output for workflows ->](#typedagent-structured-inputoutput-for-workflows)_
+
+### 3. Compose a workflow
+
+Use deterministic steps around the `TypedAgent` inside a workflow:
 
 ```fsharp
-let researchWorkflow = workflow {
-    step researcher
-    step analyst
-    step writer
+let summarizationWorkflow = workflow {
+    step loadArticleFromDb   // string -> Task<Article>
+    step typedSummarizer     // Article -> Task<Summary>
+    step saveSummaryToDb     // Summary -> Task<unit>
 }
 
-let! result = Workflow.runInProcess "Research AI trends" researchWorkflow
+let! result = Workflow.InProcess.run "article-123" summarizationWorkflow
 ```
+
+_Learn more: [Workflows: computation expression for orchestration ->](#workflows-computation-expression-for-orchestration)_
 
 ---
 
@@ -327,7 +340,7 @@ let comparisonWorkflow = workflow {
 }
 
 let input = { Symbol1 = "AAPL"; Symbol2 = "MSFT" }
-let! report = Workflow.runInProcess input comparisonWorkflow
+let! report = Workflow.InProcess.run input comparisonWorkflow
 ```
 
 The workflow is fully type-safe: the compiler ensures each step's output type matches the next step's input type. Steps can be named for debugging/logging, or unnamed for brevity.
@@ -455,7 +468,7 @@ let namedOuter = workflow {
 let result = Workflow.runSync "initial input" myWorkflow
 
 // Asynchronous
-let! result = Workflow.runInProcess "initial input" myWorkflow
+let! result = Workflow.InProcess.run "initial input" myWorkflow
 ```
 
 <details>
@@ -711,7 +724,7 @@ let stockAnalysis = workflow {
 }
 
 // In-memory execution (quick-running workflows)
-let! result = Workflow.runInProcess input stockAnalysis
+let! result = Workflow.InProcess.run input stockAnalysis
 
 // MAF durable execution (long-running, durable workflows)
 let mafWorkflow = Workflow.toMAF stockAnalysis
@@ -732,29 +745,14 @@ Agent.NET supports both execution models from a single workflow definition:
 
 | Mode | API | Description |
 |------|-----|-------------|
-| **In-memory** | `Workflow.runInProcess` | Used for short-lived workflows execut within the current process. |
+| **In-memory** | `Workflow.InProcess.run` | Used for short-lived workflows execut within the current process. |
 | **MAF Durable** | `Workflow.toMAF` | Compiles to MAF's durable runtime (backed by Azure Durable Functions) with automatic checkpointing, replay, and fault tolerance. |
 
-**Prefer explicit control?** Use `Workflow.runInProcess` and integrate with your own persistence layer - databases, queues, event stores, whatever fits your architecture.
+**Prefer explicit control?** Use `Workflow.InProcess.run` and integrate with your own persistence layer - databases, queues, event stores, whatever fits your architecture.
 
 **Want durable orchestration?** Use `Workflow.toMAF` to get enterprise-grade durability with one line of code. You can still use `Workflow.run` for local testing without installing the durable runtime.
 
 *Same workflow. Your choice of execution model.*
-
-## Roadmap
-
-**v1.0.0-alpha** (Current)
-- In-memory workflow execution (`Workflow.run`)
-- MAF graph compilation (`Workflow.toMAF`)
-- Sequential pipelines, parallel fan-out/fan-in
-- Conditional routing (`route`)
-- Resilience (`retry`, `timeout`, `fallback`, `backoff`)
-- Result workflows (railway-oriented error handling)
-
-**Upcoming: AgentNet.Durable**
-- Durable-only operations: `awaitEvent<'T>`, `delay`
-- Integration with Azure Durable Functions via `Microsoft.Agents.AI.DurableTask`
-- Human-in-the-loop workflows with durable event waiting
 
 ---
 
