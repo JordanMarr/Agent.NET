@@ -16,7 +16,7 @@ What if building AI agents for your existing .NET solution looked like this?
 // Your existing .NET service for tooling
 public class StockService 
 { 
-    public static string GetQuote(string symbol) => ...
+    public static Task<StockQuote> GetQuote(string symbol) => ...
 }
 ```
 
