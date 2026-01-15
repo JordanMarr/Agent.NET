@@ -371,6 +371,19 @@ let reportWorkflow = workflow {
 }
 ```
 
+<details>
+<summary>C# MAF equivalent</summary>
+
+```csharp
+var builder = new WorkflowBuilder(researcherExecutor);
+builder.AddEdge(researcherExecutor, analystExecutor);
+builder.AddEdge(analystExecutor, writerExecutor);
+builder.AddEdge(writerExecutor, editorExecutor);
+builder.WithOutputFrom(editorExecutor);
+var workflow = builder.Build();
+```
+</details>
+
 #### Parallel Fan-Out / Fan-In
 
 Process data in parallel, then combine results:
@@ -393,6 +406,23 @@ let report = Workflow.runSync claimData claimsWorkflow
 > ```fsharp
 > fanOut [+analyst1; +analyst2; +analyst3; +analyst4; +analyst5; +analyst6]
 > ```
+
+<details>
+<summary>C# MAF equivalent</summary>
+
+```csharp
+var builder = new WorkflowBuilder(extractClaimsExecutor);
+builder.AddEdge(extractClaimsExecutor, checkPolicyExecutor);
+builder.AddEdge(extractClaimsExecutor, assessRiskExecutor);
+builder.AddEdge(extractClaimsExecutor, detectFraudExecutor);
+builder.AddEdge(checkPolicyExecutor, aggregateResultsExecutor);
+builder.AddEdge(assessRiskExecutor, aggregateResultsExecutor);
+builder.AddEdge(detectFraudExecutor, aggregateResultsExecutor);
+builder.AddEdge(aggregateResultsExecutor, generateReportExecutor);
+builder.WithOutputFrom(generateReportExecutor);
+var workflow = builder.Build();
+```
+</details>
 
 #### Conditional Routing
 
@@ -439,6 +469,28 @@ let robustAnalysis = workflow {
 }
 ```
 
+<details>
+<summary>C# MAF + Polly equivalent</summary>
+
+```csharp
+var retryPolicy = Policy
+    .Handle<Exception>()
+    .WaitAndRetryAsync(3, attempt =>
+        TimeSpan.FromSeconds(Math.Pow(2, attempt)));
+
+var timeoutPolicy = Policy
+    .TimeoutAsync(TimeSpan.FromSeconds(30));
+
+var fallbackPolicy = Policy<string>
+    .Handle<Exception>()
+    .FallbackAsync(cachedResult);
+
+var combinedPolicy = Policy.WrapAsync(fallbackPolicy, timeoutPolicy, retryPolicy);
+
+// Then wire into your executor...
+```
+</details>
+
 #### Composition: Nest Workflows
 
 Workflows are composable - nest them freely:
@@ -473,115 +525,6 @@ let result = Workflow.runSync "initial input" myWorkflow
 // Asynchronous
 let! result = Workflow.InProcess.run "initial input" myWorkflow
 ```
-
-<details>
-<summary><strong>Complete Workflow Reference (with C# comparison)</strong></summary>
-
-### All Workflow Patterns
-
-| Pattern | Agent.NET | Description |
-|---------|-----------|-------------|
-| **Sequential** | `step a` ➔ `step b` ➔ `step c` | Chain steps in order |
-| **Parallel** | `fanOut [a; b; c]` | Execute multiple steps simultaneously |
-| **Aggregate** | `fanIn combiner` | Combine parallel results |
-| **Routing** | `route (function \| Case1 -> a \| Case2 -> b)` | Conditional branching |
-| **Retry** | `retry 3` | Retry on failure |
-| **Backoff** | `backoff Backoff.Exponential` | Delay strategy between retries |
-| **Timeout** | `timeout (TimeSpan.FromSeconds 30.)` | Fail if too slow |
-| **Fallback** | `fallback backupStep` | Alternative on failure |
-| **Compose** | `step innerWorkflow` | Nest workflows directly |
-
-### Side-by-Side: Agent.NET Syntax → MAF Output
-
-Agent.NET's `workflow` CE compiles to MAF's graph structure. Here's what you write vs what gets generated:
-
-**Sequential Pipeline**
-
-*You write (F#):*
-```fsharp
-let pipeline = workflow {
-    step researcher
-    step analyst
-    step writer
-}
-
-let! result = Workflow.InProcess.run input pipeline
-```
-
-*Compiles to (MAF equivalent):*
-```csharp
-var builder = new WorkflowBuilder(researcherExecutor);
-builder.AddEdge(researcherExecutor, analystExecutor);
-builder.AddEdge(analystExecutor, writerExecutor);
-builder.WithOutputFrom(writerExecutor);
-var workflow = builder.Build();
-```
-
----
-
-**Parallel Fan-Out / Fan-In**
-
-*You write (F#):*
-```fsharp
-let analysis = workflow {
-    step loader
-    fanOut technical fundamental sentiment
-    fanIn summarizer
-}
-```
-
-*Compiles to (MAF equivalent):*
-```csharp
-var builder = new WorkflowBuilder(loaderExecutor);
-builder.AddEdge(loaderExecutor, technicalExecutor);
-builder.AddEdge(loaderExecutor, fundamentalExecutor);
-builder.AddEdge(loaderExecutor, sentimentExecutor);
-builder.AddEdge(technicalExecutor, summarizerExecutor);
-builder.AddEdge(fundamentalExecutor, summarizerExecutor);
-builder.AddEdge(sentimentExecutor, summarizerExecutor);
-builder.WithOutputFrom(summarizerExecutor);
-var workflow = builder.Build();
-```
-
----
-
-**Resilience**
-
-*You write (F#):*
-```fsharp
-let resilient = workflow {
-    step unreliableService
-    retry 3
-    backoff Backoff.Exponential
-    timeout (TimeSpan.FromSeconds 30.)
-    fallback cachedResult
-}
-```
-
-*Compiles to (MAF + Polly equivalent):*
-```csharp
-var retryPolicy = Policy
-    .Handle<Exception>()
-    .WaitAndRetryAsync(3, attempt =>
-        TimeSpan.FromSeconds(Math.Pow(2, attempt)));
-
-var timeoutPolicy = Policy
-    .TimeoutAsync(TimeSpan.FromSeconds(30));
-
-var fallbackPolicy = Policy<string>
-    .Handle<Exception>()
-    .FallbackAsync(cachedResult);
-
-var combinedPolicy = Policy.WrapAsync(fallbackPolicy, timeoutPolicy, retryPolicy);
-
-// Then wire into your executor...
-```
-
----
-
-*The patterns are the same. The ceremony is not.*
-
-</details>
 
 ### Result Workflows: Railway-Oriented Programming
 
