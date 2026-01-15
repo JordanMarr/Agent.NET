@@ -299,7 +299,10 @@ printfn $"Agent: {stockAdvisor.Config.Name}"
 
 ### TypedAgent: Structured Input/Output for Workflows
 
-While `ChatAgent` works with strings (`string -> Task<string>`), workflows often need typed data flowing between steps. `TypedAgent` wraps a `ChatAgent` with format/parse functions to enable strongly-typed workflows:
+While `ChatAgent` works with strings (`string -> Task<string>`), workflows often need typed data flowing between steps. `TypedAgent` wraps a `ChatAgent` with format/parse functions to enable strongly-typed workflows.
+
+> For a minimal example of wrapping a `ChatAgent` into a `TypedAgent` and using it in a workflow,
+> see the [Quick Start](#quick-start). The example below shows a more involved stock comparison scenario.
 
 ```fsharp
 // Domain types for your workflow
@@ -347,7 +350,7 @@ The workflow is fully type-safe: the compiler ensures each step's output type ma
 
 ### Workflows: Computation Expression for Orchestration
 
-The `workflow` CE is where Agent.NET really shines. Orchestrate complex multi-agent scenarios with elegant, readable syntax.
+The `workflow` CE generalizes the patterns from the Quick Start to more complex multi-agent scenarios. Orchestrate complex multi-agent scenarios with elegant, readable syntax.
 
 The `step` operation directly accepts:
 - **Task functions** (`'a -> Task<'b>`)
@@ -503,7 +506,7 @@ let pipeline = workflow {
 }
 
 // Run in-memory for testing
-let! result = Workflow.runInProcess input pipeline
+let! result = Workflow.InProcess.run input pipeline
 
 // Or compile to MAF for durability
 let mafWorkflow = Workflow.toMAF pipeline
