@@ -2,7 +2,8 @@
 
 **Elegant agent workflows for .NET, designed in F#.**
 
-[![NuGet](https://img.shields.io/nuget/v/AgentNet.svg)](https://www.nuget.org/packages/AgentNet)
+[![AgentNet](https://img.shields.io/nuget/v/AgentNet.svg?label=AgentNet)](https://www.nuget.org/packages/AgentNet)
+[![AgentNet.Durable](https://img.shields.io/nuget/v/AgentNet.Durable.svg?label=AgentNet.Durable)](https://www.nuget.org/packages/AgentNet.Durable)
 [![License](https://img.shields.io/github/license/JordanMarr/Agent.NET?v=1)](LICENSE)
 
 ---
@@ -103,8 +104,14 @@ All with clean F# syntax - no attributes, no magic strings, no ceremony.
 
 ## Installation
 
+**AgentNet** — Agents and in-process workflows
 ```bash
 dotnet add package AgentNet
+```
+
+**AgentNet.Durable** — Azure Durable Function workflows
+```bash
+dotnet add package AgentNet.Durable
 ```
 
 ---
