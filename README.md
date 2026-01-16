@@ -8,6 +8,10 @@
 
 ---
 
+## What is Agent.NET?
+
+**Agent.NET** is an F# library built on the [Microsoft Agent Framework](https://github.com/microsoft/agent-framework) that provides typed agents, tools, and durable workflows for .NET applications.
+
 ##  With Agent.NET you can…
 
 ### 1. Create chat agents with tools (`ChatAgent`)
@@ -41,54 +45,6 @@ let myWorkflow = workflow {
 }
 ```
 _[Learn more ->](#workflows-computation-expression-for-orchestration)_
-
----
-
-## The Pitch
-
-What if building AI agents for your existing .NET solution looked like this?
-
-```csharp
-// Your existing .NET service for tooling
-public class StockService 
-{ 
-    public static Task<StockQuote> GetQuote(string symbol) => ...
-}
-```
-
-Wrapped elegantly in an F# function with metadata for the LLM:
-
-```fsharp
-/// <summary>Gets current stock information</summary>
-/// <param name="symbol">The stock ticker symbol (e.g., AAPL)</param>
-let getStockInfo (symbol: string) =
-    StockService.GetQuote(symbol)  // Call your existing C# or implement here in F#.
-
-let tool = Tool.createWithDocs <@ getStockInfo @>
-
-let agent =
-    ChatAgent.create "You are a helpful stock assistant."
-    |> ChatAgent.withTools [tool]
-    |> ChatAgent.build chatClient
-```
-
-The function name becomes the tool name. The XML docs become the description.  
-The parameter names and types are extracted automatically. No attributes. No magic strings. No sync issues.
-
-And when you want more structure, you can easily compose a type-safe, declarative workflow:
-
-```fsharp
-let analysisWorkflow = workflow {
-    step loadData
-    fanOut technicalAnalyst fundamentalAnalyst sentimentAnalyst
-    fanIn summarize
-    retry 3
-    timeout (TimeSpan.FromMinutes 5.0)
-}
-```
-
-**Agent.NET** wraps the [Microsoft Agent Framework](https://github.com/microsoft/agent-framework)
-with a clean, idiomatic F# API that makes building agent workflows a joy.
 
 ---
 
