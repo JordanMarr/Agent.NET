@@ -8,59 +8,54 @@
 
 ---
 
-## The Pitch
+## What is Agent.NET?
 
-What if building AI agents looked like this?
+**Agent.NET** is an F# library built on the [Microsoft Agent Framework](https://github.com/microsoft/agent-framework) that provides **agents**, **tools**, and **workflows**.
 
-```csharp
-// Your existing .NET service for tooling
-public class StockService 
-{ 
-    public static string GetQuote(string symbol) => ...
-}
-```
+## What can you do with Agent.NET?
 
-Wrapped elegantly in an F# function with metadata for the LLM:
+### 1. Create chat agents with tools (`ChatAgent`)
+Simple interface: `string -> Task<string>`. Tools are plain F# functions with metadata from XML docs. 
 
 ```fsharp
-/// <summary>Gets current stock information</summary>
-/// <param name="symbol">The stock ticker symbol (e.g., AAPL)</param>
-let getStockInfo (symbol: string) =
-    StockService.GetQuote(symbol)  // Call your existing C# or implement here in F#.
-
-let tool = Tool.createWithDocs <@ getStockInfo @>
-
 let agent =
-    ChatAgent.create "You are a helpful stock assistant."
-    |> ChatAgent.withTools [tool]
+    ChatAgent.create "You are a helpful assistant."
+    |> ChatAgent.withTools [searchTool; calculatorTool]
     |> ChatAgent.build chatClient
 ```
+_[Learn more ->](#tools-quotation-based-metadata-extraction)_
 
-That's it. The function name becomes the tool name. The XML docs become the description. The parameter names and types are extracted automatically. No attributes. No magic strings. No sync issues.
-
-And when you need to orchestrate multiple agents?
+### 2. Create typed agents as functions (`TypedAgent<'input,'output>`)
+Wrap a `ChatAgent` with format/parse functions for use in workflows or anywhere you'd call a service.
 
 ```fsharp
-let analysisWorkflow = workflow {
+let typedAgent = TypedAgent.create formatInput parseOutput chatAgent
+let! result = typedAgent.Invoke(myInput)  // Typed in, typed out
+```
+_[Learn more ->](#typedagent-structured-inputoutput-for-workflows)_
+
+### 3. Create workflows (`workflow` / `resultWorkflow`)
+Strongly typed orchestration mixing deterministic .NET code with LLM calls. Run in-process or on Azure Durable Functions.
+
+```fsharp
+let myWorkflow = workflow {
     step loadData
-    fanOut technicalAnalyst fundamentalAnalyst sentimentAnalyst
+    fanOut analyst1 analyst2 analyst3
     fanIn summarize
-    retry 3
-    timeout (TimeSpan.FromMinutes 5.0)
 }
 ```
-
-**Agent.NET** wraps the [Microsoft Agent Framework](https://github.com/microsoft/agent-framework) with a clean, idiomatic F# API that makes building AI agents a joy.
+_[Learn more ->](#workflows-computation-expression-for-orchestration)_
 
 ---
 
 ## 🚀 Durable Workflows in Azure (Minimal Example)
 
-Agent.NET workflows run anywhere — in‑memory for local execution, or durably on Azure using Durable Functions.  
-This is the entire hosting surface:
+Agent.NET workflows run anywhere — in‑memory for local execution, or durably on Azure using Durable Functions.
+
+From the `Samples.DurableFunctions` project:
 
 ```fsharp
-/// A durable workflow defined with Agent.NET
+/// A durable trade approval workflow defined with Agent.NET
 let tradeApprovalWorkflow =
     workflow {
         name "TradeApprovalWorkflow"
@@ -69,22 +64,57 @@ let tradeApprovalWorkflow =
         awaitEvent "TradeApproval" eventOf<ApprovalDecision>
         step executeTrade
     }
-
-/// Azure Durable Functions orchestrator hosting the workflow
-[<Function("TradeApprovalOrchestrator")>]
-let orchestrator ([<OrchestrationTrigger>] ctx) =
-    let request = ctx.GetInput<TradeRequest>()
-    tradeApprovalWorkflow
-    |> Workflow.Durable.run ctx request
 ```
 
+You can host this workflow inside an Azure Durable Functions orchestrator written in F# **or C#**.
+
+<details>
+<summary>F# orchestrator</summary>
+
+```fsharp
+module TradeApprovalWorkflow
+
+open Microsoft.DurableTask
+open Microsoft.Azure.Functions.Worker
+open AgentNet.Durable
+
+[<Function("TradeApprovalOrchestrator")>]
+let orchestrator ([<OrchestrationTrigger>] ctx: TaskOrchestrationContext) =
+    let request = ctx.GetInput<TradeRequest>()
+    Workflow.Durable.run ctx request tradeApprovalWorkflow
+```
+
+</details>
+
+<details open>
+<summary>C# orchestrator</summary>
+
+Call a workflow defined in your F# project:
+
+```csharp
+using Microsoft.DurableTask;
+using Microsoft.Azure.Functions.Worker;
+using AgentNet.Durable;
+
+public static class TradeApprovalOrchestrator
+{
+    [Function("TradeApprovalOrchestrator")]
+    public static Task<TradeResult> Run([OrchestrationTrigger] TaskOrchestrationContext context)
+    {
+        var request = context.GetInput<TradeRequest>();
+        return Workflow.Durable.run(context, request, tradeApprovalWorkflow);
+    }
+}
+```
+
+</details>
+
 This is the final shape:  
-- **Declarative workflow definition**  
-- **Typed steps** (plain .NET functions)  
-- **Explicit suspension** via `awaitEvent`  
+- **Declarative workflow definition** — one expression per workflow  
+- **Typed steps** — plain .NET functions (with or without agents)  
+- **Explicit suspension** via `awaitEvent` (human-in-the-loop, external events)  
 - **Durable execution** powered by MAF and Azure Durable Functions  
 - **Minimal host surface** — the orchestrator simply runs the workflow  
-
 
 ---
 
@@ -118,54 +148,65 @@ dotnet add package AgentNet.Durable
 
 ## Quick Start
 
-### 1. Define Your Tools
+### 1. Build a ChatAgent
 
-Write normal F# functions with XML documentation (summary only or summary and params):
+Create a simple `ChatAgent` that works on strings:
 
 ```fsharp
 open AgentNet
 
-/// Gets the current weather for a city
-let getWeather (city: string) = task {
-    let! weather = WeatherApi.fetch city
-    return $"The weather in {city} is {weather}"
-}
+let summarizerAgent =
+    ChatAgent.create "You summarize articles into concise bullet points."
+    |> ChatAgent.withName "Summarizer"
+    |> ChatAgent.build chatClient   // any IChatClient implementation
 
-/// <summary>Gets the current time in a timezone</summary>
-/// <param name="timezone">The timezone (e.g., America/New_York)</param>
-let getTime (timezone: string) =
-    let time = TimeApi.now timezone
-    $"The current time is {time}"
-
-// Create tools - metadata extracted automatically!
-let weatherTool = Tool.createWithDocs <@ getWeather @>
-let timeTool =    Tool.createWithDocs <@ getTime @>
+// Shape: string -> Task<string>
+let! text = summarizerAgent.Chat("Summarize the latest quarterly report.")
 ```
 
-### 2. Create an Agent
+_Learn more: [ChatAgent: pipeline-style configuration ->](#chatagent-pipeline-style-configuration)_
+
+> `ChatAgent` values always have the shape `string -> Task<string>`. To use them inside a
+> typed workflow, you adapt them into `TypedAgent<'i,'o>` by providing format/parse functions.
+
+### 2. Wrap it as a TypedAgent
+
+Turn the string-based agent into a typed function that can be composed into the workflow:
 
 ```fsharp
-let assistant =
-    ChatAgent.create "You are a helpful assistant that provides weather and time information."
-    |> ChatAgent.withName "WeatherBot"
-    |> ChatAgent.withTools [weatherTool; timeTool]
-    |> ChatAgent.build chatClient
+// Typed domain model
+type Article = { Id: string; Title: string; Body: string }
+type Summary = { Title: string; Summary: string }
 
-// Chat with your agent
-let! response = assistant.Chat("What's the weather like in Seattle?")
+// Format typed input into a prompt
+let formatArticle (article: Article) =
+    $"Summarize the following article titled '{article.Title}':\n\n{article.Body}"
+
+// Parse the model response back into a typed result
+let parseSummary (article: Article) (response: string) : Summary =
+    { Title = article.Title; Summary = response }
+
+let typedSummarizer : TypedAgent<Article, Summary> =
+    TypedAgent.create formatArticle parseSummary summarizerAgent
 ```
 
-### 3. Orchestrate with Workflows
+_Learn more: [TypedAgent: structured input/output for workflows ->](#typedagent-structured-inputoutput-for-workflows)_
+
+### 3. Compose a workflow
+
+Use deterministic steps around the `TypedAgent` inside a workflow:
 
 ```fsharp
-let researchWorkflow = workflow {
-    step researcher
-    step analyst
-    step writer
+let summarizationWorkflow = workflow {
+    step loadArticleFromDb   // string -> Task<Article>
+    step typedSummarizer     // Article -> Task<Summary>
+    step saveSummaryToDb     // Summary -> Task<unit>
 }
 
-let! result = Workflow.runInProcess "Research AI trends" researchWorkflow
+let! result = Workflow.InProcess.run "article-123" summarizationWorkflow
 ```
+
+_Learn more: [Workflows: computation expression for orchestration ->](#workflows-computation-expression-for-orchestration)_
 
 ---
 
@@ -235,7 +276,10 @@ printfn $"Agent: {stockAdvisor.Config.Name}"
 
 ### TypedAgent: Structured Input/Output for Workflows
 
-While `ChatAgent` works with strings (`string -> Task<string>`), workflows often need typed data flowing between steps. `TypedAgent` wraps a `ChatAgent` with format/parse functions to enable strongly-typed workflows:
+While `ChatAgent` works with strings (`string -> Task<string>`), workflows often need typed data flowing between steps. `TypedAgent` wraps a `ChatAgent` with format/parse functions to enable strongly-typed workflows.
+
+> For a minimal example of wrapping a `ChatAgent` into a `TypedAgent` and using it in a workflow,
+> see the [Quick Start](#quick-start). The example below shows a more involved stock comparison scenario.
 
 ```fsharp
 // Domain types for your workflow
@@ -276,14 +320,14 @@ let comparisonWorkflow = workflow {
 }
 
 let input = { Symbol1 = "AAPL"; Symbol2 = "MSFT" }
-let! report = Workflow.runInProcess input comparisonWorkflow
+let! report = Workflow.InProcess.run input comparisonWorkflow
 ```
 
 The workflow is fully type-safe: the compiler ensures each step's output type matches the next step's input type. Steps can be named for debugging/logging, or unnamed for brevity.
 
 ### Workflows: Computation Expression for Orchestration
 
-The `workflow` CE is where Agent.NET really shines. Orchestrate complex multi-agent scenarios with elegant, readable syntax.
+The `workflow` CE generalizes the patterns from the Quick Start to more complex multi-agent scenarios. Orchestrate complex multi-agent scenarios with elegant, readable syntax.
 
 The `step` operation directly accepts:
 - **Task functions** (`'a -> Task<'b>`)
@@ -303,6 +347,19 @@ let reportWorkflow = workflow {
     step editor          // Polish and refine
 }
 ```
+
+<details>
+<summary>C# MAF equivalent</summary>
+
+```csharp
+var builder = new WorkflowBuilder(researcherExecutor);
+builder.AddEdge(researcherExecutor, analystExecutor);
+builder.AddEdge(analystExecutor, writerExecutor);
+builder.AddEdge(writerExecutor, editorExecutor);
+builder.WithOutputFrom(editorExecutor);
+var workflow = builder.Build();
+```
+</details>
 
 #### Parallel Fan-Out / Fan-In
 
@@ -327,24 +384,78 @@ let report = Workflow.runSync claimData claimsWorkflow
 > fanOut [+analyst1; +analyst2; +analyst3; +analyst4; +analyst5; +analyst6]
 > ```
 
+<details>
+<summary>C# MAF equivalent</summary>
+
+```csharp
+var builder = new WorkflowBuilder(extractClaimsExecutor);
+builder.AddEdge(extractClaimsExecutor, checkPolicyExecutor);
+builder.AddEdge(extractClaimsExecutor, assessRiskExecutor);
+builder.AddEdge(extractClaimsExecutor, detectFraudExecutor);
+builder.AddEdge(checkPolicyExecutor, aggregateResultsExecutor);
+builder.AddEdge(assessRiskExecutor, aggregateResultsExecutor);
+builder.AddEdge(detectFraudExecutor, aggregateResultsExecutor);
+builder.AddEdge(aggregateResultsExecutor, generateReportExecutor);
+builder.WithOutputFrom(generateReportExecutor);
+var workflow = builder.Build();
+```
+</details>
+
 #### Conditional Routing
 
 Route to different agents based on content:
 
 ```fsharp
-type Priority =
-    | Urgent of string
-    | Normal of string
-    | LowPriority of string
+type Priority = Urgent | Normal | LowPriority
 
 let triageWorkflow = workflow {
     step classifier
     route (function
-        | Urgent msg -> urgentHandler
-        | Normal msg -> standardHandler
-        | LowPriority msg -> batchHandler)
+        | Urgent -> urgentHandler
+        | Normal -> standardHandler
+        | LowPriority -> batchHandler)
 }
 ```
+
+<details>
+<summary>C# MAF equivalent</summary>
+
+```csharp
+// Create transitions with explicit filters
+var urgentTransition = new Transition(
+    classifierExecutor,
+    urgentHandlerExecutor
+);
+urgentTransition.Filter = result => result is Urgent;
+
+var normalTransition = new Transition(
+    classifierExecutor,
+    standardHandlerExecutor
+);
+normalTransition.Filter = result => result is Normal;
+
+var lowTransition = new Transition(
+    classifierExecutor,
+    batchHandlerExecutor
+);
+lowTransition.Filter = result => result is LowPriority;
+
+// Add transitions to the workflow
+builder.AddTransition(urgentTransition);
+builder.AddTransition(normalTransition);
+builder.AddTransition(lowTransition);
+
+// Declare possible outputs
+builder.WithOutputFrom(
+    urgentHandlerExecutor,
+    standardHandlerExecutor,
+    batchHandlerExecutor
+);
+
+var workflow = builder.Build();
+```
+
+</details>
 
 #### Resilience: Retry, Timeout, Fallback
 
@@ -372,6 +483,28 @@ let robustAnalysis = workflow {
 }
 ```
 
+<details>
+<summary>C# MAF + Polly equivalent</summary>
+
+```csharp
+var retryPolicy = Policy
+    .Handle<Exception>()
+    .WaitAndRetryAsync(3, attempt =>
+        TimeSpan.FromSeconds(Math.Pow(2, attempt)));
+
+var timeoutPolicy = Policy
+    .TimeoutAsync(TimeSpan.FromSeconds(30));
+
+var fallbackPolicy = Policy<string>
+    .Handle<Exception>()
+    .FallbackAsync(cachedResult);
+
+var combinedPolicy = Policy.WrapAsync(fallbackPolicy, timeoutPolicy, retryPolicy);
+
+// Then wire into your executor...
+```
+</details>
+
 #### Composition: Nest Workflows
 
 Workflows are composable - nest them freely:
@@ -397,6 +530,30 @@ let namedOuter = workflow {
 }
 ```
 
+<details>
+<summary>C# MAF equivalent</summary>
+
+```csharp
+// Build the inner workflow
+var innerBuilder = new WorkflowBuilder(stepAExecutor);
+innerBuilder.AddEdge(stepAExecutor, stepBExecutor);
+innerBuilder.WithOutputFrom(stepBExecutor);
+var innerWorkflow = innerBuilder.Build();
+
+// Convert the inner workflow into an executor
+var innerExecutor = new WorkflowExecutor("InnerStep", innerWorkflow);
+
+// Build the outer workflow
+var outerBuilder = new WorkflowBuilder(preprocessExecutor);
+outerBuilder.AddEdge(preprocessExecutor, innerExecutor);
+outerBuilder.AddEdge(innerExecutor, postprocessExecutor);
+outerBuilder.WithOutputFrom(postprocessExecutor);
+
+var outerWorkflow = outerBuilder.Build();
+```
+
+</details>
+
 #### Running Workflows
 
 ```fsharp
@@ -404,121 +561,8 @@ let namedOuter = workflow {
 let result = Workflow.runSync "initial input" myWorkflow
 
 // Asynchronous
-let! result = Workflow.runInProcess "initial input" myWorkflow
+let! result = Workflow.InProcess.run "initial input" myWorkflow
 ```
-
-<details>
-<summary><strong>Complete Workflow Reference (with C# comparison)</strong></summary>
-
-### All Workflow Patterns
-
-| Pattern | Agent.NET | Description |
-|---------|-----------|-------------|
-| **Sequential** | `step a` ➔ `step b` ➔ `step c` | Chain steps in order |
-| **Parallel** | `fanOut [a; b; c]` | Execute multiple steps simultaneously |
-| **Aggregate** | `fanIn combiner` | Combine parallel results |
-| **Routing** | `route (function \| Case1 -> a \| Case2 -> b)` | Conditional branching |
-| **Retry** | `retry 3` | Retry on failure |
-| **Backoff** | `backoff Backoff.Exponential` | Delay strategy between retries |
-| **Timeout** | `timeout (TimeSpan.FromSeconds 30.)` | Fail if too slow |
-| **Fallback** | `fallback backupStep` | Alternative on failure |
-| **Compose** | `step innerWorkflow` | Nest workflows directly |
-
-### Side-by-Side: Agent.NET Syntax → MAF Output
-
-Agent.NET's `workflow` CE compiles to MAF's graph structure. Here's what you write vs what gets generated:
-
-**Sequential Pipeline**
-
-*You write (F#):*
-```fsharp
-let pipeline = workflow {
-    step researcher
-    step analyst
-    step writer
-}
-
-// Run in-memory for testing
-let! result = Workflow.runInProcess input pipeline
-
-// Or compile to MAF for durability
-let mafWorkflow = Workflow.toMAF pipeline
-```
-
-*Compiles to (MAF equivalent):*
-```csharp
-var builder = new WorkflowBuilder(researcherExecutor);
-builder.AddEdge(researcherExecutor, analystExecutor);
-builder.AddEdge(analystExecutor, writerExecutor);
-builder.WithOutputFrom(writerExecutor);
-var workflow = builder.Build();
-```
-
----
-
-**Parallel Fan-Out / Fan-In**
-
-*You write (F#):*
-```fsharp
-let analysis = workflow {
-    step loader
-    fanOut technical fundamental sentiment
-    fanIn summarizer
-}
-```
-
-*Compiles to (MAF equivalent):*
-```csharp
-var builder = new WorkflowBuilder(loaderExecutor);
-builder.AddEdge(loaderExecutor, technicalExecutor);
-builder.AddEdge(loaderExecutor, fundamentalExecutor);
-builder.AddEdge(loaderExecutor, sentimentExecutor);
-builder.AddEdge(technicalExecutor, summarizerExecutor);
-builder.AddEdge(fundamentalExecutor, summarizerExecutor);
-builder.AddEdge(sentimentExecutor, summarizerExecutor);
-builder.WithOutputFrom(summarizerExecutor);
-var workflow = builder.Build();
-```
-
----
-
-**Resilience**
-
-*You write (F#):*
-```fsharp
-let resilient = workflow {
-    step unreliableService
-    retry 3
-    backoff Backoff.Exponential
-    timeout (TimeSpan.FromSeconds 30.)
-    fallback cachedResult
-}
-```
-
-*Compiles to (MAF + Polly equivalent):*
-```csharp
-var retryPolicy = Policy
-    .Handle<Exception>()
-    .WaitAndRetryAsync(3, attempt =>
-        TimeSpan.FromSeconds(Math.Pow(2, attempt)));
-
-var timeoutPolicy = Policy
-    .TimeoutAsync(TimeSpan.FromSeconds(30));
-
-var fallbackPolicy = Policy<string>
-    .Handle<Exception>()
-    .FallbackAsync(cachedResult);
-
-var combinedPolicy = Policy.WrapAsync(fallbackPolicy, timeoutPolicy, retryPolicy);
-
-// Then wire into your executor...
-```
-
----
-
-*The patterns are the same. The ceremony is not.*
-
-</details>
 
 ### Result Workflows: Railway-Oriented Programming
 
@@ -660,10 +704,10 @@ let stockAnalysis = workflow {
 }
 
 // In-memory execution (quick-running workflows)
-let! result = Workflow.runInProcess input stockAnalysis
+let! result = Workflow.InProcess.run input stockAnalysis
 
 // MAF durable execution (long-running, durable workflows)
-let mafWorkflow = Workflow.toMAF stockAnalysis
+let mafWorkflow = Workflow.Durable.run ctx request stockAnalysis
 ```
 
 ### Why a Semantic Layer?
@@ -681,29 +725,10 @@ Agent.NET supports both execution models from a single workflow definition:
 
 | Mode | API | Description |
 |------|-----|-------------|
-| **In-memory** | `Workflow.runInProcess` | Used for short-lived workflows execut within the current process. |
-| **MAF Durable** | `Workflow.toMAF` | Compiles to MAF's durable runtime (backed by Azure Durable Functions) with automatic checkpointing, replay, and fault tolerance. |
-
-**Prefer explicit control?** Use `Workflow.runInProcess` and integrate with your own persistence layer - databases, queues, event stores, whatever fits your architecture.
-
-**Want durable orchestration?** Use `Workflow.toMAF` to get enterprise-grade durability with one line of code. You can still use `Workflow.run` for local testing without installing the durable runtime.
+| **In-memory** | `Workflow.InProcess.run` | Used for short-lived workflows executed within the current process. |
+| **MAF Durable** | `Workflow.Durable.run` | Runs on MAF's durable runtime (backed by Azure Durable Functions) with automatic checkpointing, replay, and fault tolerance. |
 
 *Same workflow. Your choice of execution model.*
-
-## Roadmap
-
-**v1.0.0-alpha** (Current)
-- In-memory workflow execution (`Workflow.run`)
-- MAF graph compilation (`Workflow.toMAF`)
-- Sequential pipelines, parallel fan-out/fan-in
-- Conditional routing (`route`)
-- Resilience (`retry`, `timeout`, `fallback`, `backoff`)
-- Result workflows (railway-oriented error handling)
-
-**Upcoming: AgentNet.Durable**
-- Durable-only operations: `awaitEvent<'T>`, `delay`
-- Integration with Azure Durable Functions via `Microsoft.Agents.AI.DurableTask`
-- Human-in-the-loop workflows with durable event waiting
 
 ---
 
