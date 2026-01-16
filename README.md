@@ -99,7 +99,8 @@ let tradeApprovalWorkflow =
 
 You can host this workflow inside an Azure Durable Functions orchestrator written in F# **or C#**.
 
-F# orchestrator:
+<details>
+<summary>F# orchestrator</summary>
 
 ```fsharp
 module TradeApprovalWorkflow
@@ -114,7 +115,12 @@ let orchestrator ([<OrchestrationTrigger>] ctx: TaskOrchestrationContext) =
     Workflow.Durable.run ctx request tradeApprovalWorkflow
 ```
 
-C# orchestrator calling a workflow defined in your F# project:
+</details>
+
+<details open>
+<summary>C# orchestrator</summary>
+
+Call a workflow defined in your F# project:
 
 ```csharp
 using Microsoft.DurableTask;
@@ -131,6 +137,8 @@ public static class TradeApprovalOrchestrator
     }
 }
 ```
+
+</details>
 
 This is the final shape:  
 - **Declarative workflow definition** — one expression per workflow  
