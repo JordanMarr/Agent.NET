@@ -8,38 +8,39 @@
 
 ---
 
-## What can I use Agent.NET for?
+##  With Agent.NET you can…
 
-Agent.NET has three primary usage patterns:
+### 1. Create chat agents with tools (`ChatAgent`)
+Simple interface: `string -> Task<string>`. Tools are plain F# functions with metadata from XML docs. 
 
-1. **Chat agents with tools (`ChatAgent`)**
-   Simple interface: `string -> Task<string>`. Tools are plain F# functions with metadata from XML docs.
-   ```fsharp
-   let agent =
-       ChatAgent.create "You are a helpful assistant."
-       |> ChatAgent.withTools [searchTool; calculatorTool]
-       |> ChatAgent.build chatClient
-   ```
-   _[Learn more ->](#chatagent-pipeline-style-configuration)_
+```fsharp
+let agent =
+    ChatAgent.create "You are a helpful assistant."
+    |> ChatAgent.withTools [searchTool; calculatorTool]
+    |> ChatAgent.build chatClient
+```
+_[Learn more ->](#chatagent-pipeline-style-configuration)_
 
-2. **Typed agents as functions (`TypedAgent<'input,'output>`)**
-   Wrap a `ChatAgent` with format/parse functions for use in workflows or anywhere you'd call a service.
-   ```fsharp
-   let typedAgent = TypedAgent.create formatInput parseOutput chatAgent
-   let! result = typedAgent.Invoke(myInput)  // Typed in, typed out
-   ```
-   _[Learn more ->](#typedagent-structured-inputoutput-for-workflows)_
+### 2. Create typed agents as functions (`TypedAgent<'input,'output>`)
+Wrap a `ChatAgent` with format/parse functions for use in workflows or anywhere you'd call a service.
 
-3. **Workflows (`workflow` / `resultWorkflow`)**
-   Strongly typed orchestration mixing deterministic .NET code with LLM calls. Run in-process or on Azure Durable Functions.
-   ```fsharp
-   let myWorkflow = workflow {
-       step loadData
-       fanOut analyst1 analyst2 analyst3
-       fanIn summarize
-   }
-   ```
-   _[Learn more ->](#workflows-computation-expression-for-orchestration)_
+```fsharp
+let typedAgent = TypedAgent.create formatInput parseOutput chatAgent
+let! result = typedAgent.Invoke(myInput)  // Typed in, typed out
+```
+_[Learn more ->](#typedagent-structured-inputoutput-for-workflows)_
+
+### 3. Create workflows (`workflow` / `resultWorkflow`)
+Strongly typed orchestration mixing deterministic .NET code with LLM calls. Run in-process or on Azure Durable Functions.
+
+```fsharp
+let myWorkflow = workflow {
+    step loadData
+    fanOut analyst1 analyst2 analyst3
+    fanIn summarize
+}
+```
+_[Learn more ->](#workflows-computation-expression-for-orchestration)_
 
 ---
 
