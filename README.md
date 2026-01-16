@@ -10,9 +10,9 @@
 
 ## What is Agent.NET?
 
-**Agent.NET** is an F# library built on the [Microsoft Agent Framework](https://github.com/microsoft/agent-framework) that provides typed agents, tools, and durable workflows for .NET applications.
+**Agent.NET** is an F# library built on the [Microsoft Agent Framework](https://github.com/microsoft/agent-framework) that provides **agents**, **tools**, and **workflows**.
 
-##  With Agent.NET you can…
+## What can you do with Agent.NET?
 
 ### 1. Create chat agents with tools (`ChatAgent`)
 Simple interface: `string -> Task<string>`. Tools are plain F# functions with metadata from XML docs. 
