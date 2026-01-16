@@ -20,7 +20,7 @@ type ProcessingError =
     | SaveError of code: int
 
 [<Test>]
-let ``Result workflow succeeds when all steps return Ok``() =
+let ``Result workflow succeeds when all steps return Ok``() = task {
     // Arrange
     let parse = ResultExecutor.map "Parse" (fun (raw: string) ->
         { Id = "doc-1"; Content = raw })
@@ -39,8 +39,7 @@ let ``Result workflow succeeds when all steps return Ok``() =
     }
 
     // Act
-    let result = ResultWorkflow.runSync "Hello world from F#" resultWf
-
+    let! result = ResultWorkflow.InProcess.run "Hello world from F#" resultWf
     // Assert
     match result with
     | Ok processed ->
@@ -49,9 +48,10 @@ let ``Result workflow succeeds when all steps return Ok``() =
         processed.Doc.IsValid =! true
     | Error _ ->
         Assert.Fail "Expected Ok result"
+}
 
 [<Test>]
-let ``Result workflow short-circuits on first Error``() =
+let ``Result workflow short-circuits on first Error``() = task {
     // Arrange
     let mutable step1Called = false
     let mutable step2Called = false
@@ -76,8 +76,7 @@ let ``Result workflow short-circuits on first Error``() =
     }
 
     // Act
-    let result = ResultWorkflow.runSync "test input" resultWf
-
+    let! result = ResultWorkflow.InProcess.run "test input" resultWf
     // Assert
     step1Called =! true
     step2Called =! true
@@ -89,9 +88,10 @@ let ``Result workflow short-circuits on first Error``() =
         reason =! "Content is invalid"
     | _ ->
         Assert.Fail "Expected ValidationError"
+}
 
 [<Test>]
-let ``ResultExecutor_map wraps return value in Ok``() =
+let ``ResultExecutor_map wraps return value in Ok``() = task {
     // Arrange
     let doubler = ResultExecutor.map "Doubler" (fun (x: int) -> x * 2)
 
@@ -100,13 +100,13 @@ let ``ResultExecutor_map wraps return value in Ok``() =
     }
 
     // Act
-    let result = ResultWorkflow.runSync 21 resultWf
-
+    let! result = ResultWorkflow.InProcess.run 21 resultWf
     // Assert
     result =! (Ok 42)
+}
 
 [<Test>]
-let ``ResultExecutor_bind passes Result through unchanged``() =
+let ``ResultExecutor_bind passes Result through unchanged``() = task {
     // Arrange: bind returns the Result directly
     let validator = ResultExecutor.bind "Validator" (fun (x: int) ->
         if x > 0 then Ok $"Valid: {x}"
@@ -116,19 +116,20 @@ let ``ResultExecutor_bind passes Result through unchanged``() =
     let negativeWf = resultWorkflow { step validator }
 
     // Act & Assert: Positive case
-    let positiveResult = ResultWorkflow.runSync 10 positiveWf
+    let! positiveResult = ResultWorkflow.InProcess.run 10 positiveWf
     match positiveResult with
     | Ok value -> value =! "Valid: 10"
     | Error _ -> Assert.Fail "Expected Ok result"
 
     // Act & Assert: Negative case
-    let negativeResult = ResultWorkflow.runSync -5 negativeWf
+    let! negativeResult = ResultWorkflow.InProcess.run -5 negativeWf
     match negativeResult with
     | Error (ParseError msg) -> msg =! "Value must be positive"
     | _ -> Assert.Fail "Expected ParseError"
+}
 
 [<Test>]
-let ``ResultExecutor_mapTask wraps task result in Ok``() =
+let ``ResultExecutor_mapTask wraps task result in Ok``() = task {
     // Arrange
     let taskFetcher = ResultExecutor.mapTask "TaskFetcher" (fun (id: string) -> task {
         do! Task.Delay 10  // Simulate async work
@@ -140,8 +141,7 @@ let ``ResultExecutor_mapTask wraps task result in Ok``() =
     }
 
     // Act
-    let result = ResultWorkflow.runSync "doc-123" resultWf
-
+    let! result = ResultWorkflow.InProcess.run "doc-123" resultWf
     // Assert
     match result with
     | Ok doc ->
@@ -149,9 +149,10 @@ let ``ResultExecutor_mapTask wraps task result in Ok``() =
         doc.Content =! "Content for doc-123"
     | Error _ ->
         Assert.Fail "Expected Ok result"
+}
 
 [<Test>]
-let ``ResultExecutor_bindTask passes task Result through``() =
+let ``ResultExecutor_bindTask passes task Result through``() = task {
     // Arrange
     let taskValidator = ResultExecutor.bindTask "TaskValidator" (fun (doc: Document) -> task {
         do! Task.Delay 10
@@ -165,19 +166,20 @@ let ``ResultExecutor_bindTask passes task Result through``() =
     let shortDocWf = resultWorkflow { step taskValidator }
 
     // Act & Assert: Long content passes
-    let longResult = ResultWorkflow.runSync { Id = "1"; Content = "This is long enough" } longDocWf
+    let! longResult = ResultWorkflow.InProcess.run { Id = "1"; Content = "This is long enough" } longDocWf
     match longResult with
     | Ok validated -> validated.IsValid =! true
     | Error _ -> Assert.Fail "Expected Ok for long content"
 
     // Act & Assert: Short content fails
-    let shortResult = ResultWorkflow.runSync { Id = "2"; Content = "Hi" } shortDocWf
+    let! shortResult = ResultWorkflow.InProcess.run { Id = "2"; Content = "Hi" } shortDocWf
     match shortResult with
     | Error (ValidationError (_, reason)) -> reason =! "Content too short"
     | _ -> Assert.Fail "Expected ValidationError for short content"
+}
 
 [<Test>]
-let ``Result workflow with multiple error types in chain``() =
+let ``Result workflow with multiple error types in chain``() = task {
     // Arrange: Each step can fail with different error types
     let parse = ResultExecutor.bind "Parse" (fun (raw: string) ->
         if raw.Length > 0 then Ok { Id = "doc"; Content = raw }
@@ -199,25 +201,26 @@ let ``Result workflow with multiple error types in chain``() =
     }
 
     // Act & Assert: ParseError case
-    let parseResult = ResultWorkflow.runSync "" resultWf
+    let! parseResult = ResultWorkflow.InProcess.run "" resultWf
     match parseResult with
     | Error (ParseError _) -> ()
     | _ -> Assert.Fail "Expected ParseError"
 
     // Act & Assert: ValidationError case (note: "bad content" does not contain "valid")
-    let validateResult = ResultWorkflow.runSync "bad content" resultWf
+    let! validateResult = ResultWorkflow.InProcess.run "bad content" resultWf
     match validateResult with
     | Error (ValidationError _) -> ()
     | _ -> Assert.Fail "Expected ValidationError"
 
     // Act & Assert: Success case
-    let successResult = ResultWorkflow.runSync "valid content" resultWf
+    let! successResult = ResultWorkflow.InProcess.run "valid content" resultWf
     match successResult with
     | Ok processed -> processed.Summary =! "Saved"
     | _ -> Assert.Fail "Expected Ok"
+}
 
 [<Test>]
-let ``Result workflow output type is correctly inferred``() =
+let ``Result workflow output type is correctly inferred``() = task {
     // Arrange
     let stringToInt = ResultExecutor.map "StringToInt" (fun (s: string) -> s.Length)
     let intToBool = ResultExecutor.map "IntToBool" (fun (n: int) -> n > 5)
@@ -231,8 +234,7 @@ let ``Result workflow output type is correctly inferred``() =
     }
 
     // Act: Type inference should work - resultWf : ResultWorkflowDef<string, Document, 'error>
-    let result: Result<Document, ProcessingError> = ResultWorkflow.runSync "Hello World!" resultWf
-
+    let! result = ResultWorkflow.InProcess.run "Hello World!" resultWf
     // Assert
     match result with
     | Ok doc ->
@@ -240,9 +242,10 @@ let ``Result workflow output type is correctly inferred``() =
         doc.Content =! "Long"  // "Hello World!" has 12 chars > 5
     | Error _ ->
         Assert.Fail "Expected Ok result"
+}
 
 [<Test>]
-let ``Result workflow can be composed using toExecutor``() =
+let ``Result workflow can be composed using toExecutor``() = task {
     // Arrange: Create an inner workflow
     let innerParse = ResultExecutor.map "InnerParse" (fun (raw: string) ->
         { Id = "inner"; Content = raw.ToUpper() })
@@ -256,7 +259,7 @@ let ``Result workflow can be composed using toExecutor``() =
     }
 
     // Convert inner workflow to an executor
-    let innerAsExecutor = ResultWorkflow.toExecutor "InnerWorkflow" innerWorkflow
+    let innerAsExecutor = ResultWorkflow.InProcess.toExecutor "InnerWorkflow" innerWorkflow
 
     // Create outer workflow that uses the inner workflow
     let processStep = ResultExecutor.map "Process" (fun (validated: ValidatedDoc) ->
@@ -268,8 +271,7 @@ let ``Result workflow can be composed using toExecutor``() =
     }
 
     // Act
-    let result = ResultWorkflow.runSync "hello world" outerWorkflow
-
+    let! result = ResultWorkflow.InProcess.run "hello world" outerWorkflow
     // Assert
     match result with
     | Ok processed ->
@@ -277,16 +279,17 @@ let ``Result workflow can be composed using toExecutor``() =
         processed.Summary =! "Processed"
     | Error _ ->
         Assert.Fail "Expected Ok result"
+}
 
 // =============================================================================
 // SRTP-based tests (new syntax without explicit ResultExecutor wrappers)
 // =============================================================================
 
 [<Test>]
-let ``SRTP: Result workflow with direct Task<Result> functions``() =
+let ``SRTP: Result workflow with direct Task<Result> functions``() = task {
     // Arrange - direct functions, no ResultExecutor wrapper needed
     let validate (input: string) : Task<Result<Document, ProcessingError>> = task {
-        if input.Length > 0 
+        if input.Length > 0
         then return Ok { Id = "doc-1"; Content = input }
         else return Error (ParseError "Empty input")
     }
@@ -301,15 +304,15 @@ let ``SRTP: Result workflow with direct Task<Result> functions``() =
     }
 
     // Act
-    let result = ResultWorkflow.runSync "Hello world" resultWf
-
+    let! result = ResultWorkflow.InProcess.run "Hello world" resultWf
     // Assert
     match result with
     | Ok validated -> validated.IsValid =! true
     | Error _ -> Assert.Fail "Expected Ok result"
+}
 
 [<Test>]
-let ``SRTP: Result workflow short-circuits on error``() =
+let ``SRTP: Result workflow short-circuits on error``() = task {
     // Arrange
     let mutable step2Called = false
 
@@ -328,16 +331,16 @@ let ``SRTP: Result workflow short-circuits on error``() =
     }
 
     // Act
-    let result = ResultWorkflow.runSync "test" resultWf
-
+    let! result = ResultWorkflow.InProcess.run "test" resultWf
     // Assert
     step2Called =! false  // Should NOT be called due to short-circuit
     match result with
     | Error (ParseError _) -> ()
     | _ -> Assert.Fail "Expected ParseError"
+}
 
 [<Test>]
-let ``SRTP: Result workflow with Async<Result> functions``() =
+let ``SRTP: Result workflow with Async<Result> functions``() = task {
     // Arrange
     let validateAsync (input: string) : Async<Result<Document, ProcessingError>> = async {
         if input.Length > 3 then
@@ -351,9 +354,8 @@ let ``SRTP: Result workflow with Async<Result> functions``() =
     }
 
     // Act
-    let successResult = ResultWorkflow.runSync "Hello" resultWf
-    let failResult = ResultWorkflow.runSync "Hi" resultWf
-
+    let! successResult = ResultWorkflow.InProcess.run "Hello" resultWf
+    let! failResult = ResultWorkflow.InProcess.run "Hi" resultWf
     // Assert
     match successResult with
     | Ok doc -> doc.Id =! "async-doc"
@@ -362,18 +364,19 @@ let ``SRTP: Result workflow with Async<Result> functions``() =
     match failResult with
     | Error (ValidationError _) -> ()
     | _ -> Assert.Fail "Expected ValidationError"
+}
 
 [<Test>]
-let ``SRTP: ok wrapper for map semantics with Task functions``() =
+let ``SRTP: ok wrapper for map semantics with Task functions``() = task {
     // Arrange - non-Result-returning functions wrapped with 'ok'
-    let fetchData (id: string) = 
+    let fetchData (id: string) =
         if id = "doc-123"
         then Ok { Id = id; Content = $"Content for {id}" }
         else Error (ParseError "Not found")
         |> Task.FromResult
 
-    let transform (doc: Document) : Task<ValidatedDoc> = 
-        { Doc = doc; IsValid = true; Errors = [] } |> Task.FromResult    
+    let transform (doc: Document) : Task<ValidatedDoc> =
+        { Doc = doc; IsValid = true; Errors = [] } |> Task.FromResult
 
     let resultWf = resultWorkflow {
         step fetchData      // Task<string> -> Task<Result<Document, 'e>>
@@ -381,41 +384,42 @@ let ``SRTP: ok wrapper for map semantics with Task functions``() =
     }
 
     // Act
-    let result: Result<ValidatedDoc, ProcessingError> = ResultWorkflow.runSync "doc-123" resultWf
-
+    let! result = ResultWorkflow.InProcess.run "doc-123" resultWf
     // Assert
     match result with
     | Ok validated ->
         validated.Doc.Id =! "doc-123"
         validated.IsValid =! true
     | Error _ -> Assert.Fail "Expected Ok result"
+}
 
 // Same as above test but with Error condition
 [<Test>]
-let ``SRTP: ok wrapper for map semantics with Task functions - Error case``() =
+let ``SRTP: ok wrapper for map semantics with Task functions - Error case``() = task {
     // Arrange - non-Result-returning functions wrapped with 'ok'
-    let fetchData (id: string) = 
+    let fetchData (id: string) =
         if id = "doc-123"
         then Ok { Id = id; Content = $"Content for {id}" }
         else Error (ParseError "Not found")
         |> Task.FromResult
-    let transform (doc: Document) : Task<ValidatedDoc> = 
-        { Doc = doc; IsValid = true; Errors = [] } |> Task.FromResult    
+    let transform (doc: Document) : Task<ValidatedDoc> =
+        { Doc = doc; IsValid = true; Errors = [] } |> Task.FromResult
     let resultWf = resultWorkflow {
         step fetchData      // Task<string> -> Task<Result<Document, 'e>>
         step (ok transform) // Task<Document> -> Task<Result<ValidatedDoc, 'e>>
     }
     // Act
-    let result: Result<ValidatedDoc, ProcessingError> = ResultWorkflow.runSync "unknown-doc" resultWf
+    let! result = ResultWorkflow.InProcess.run "unknown-doc" resultWf
     // Assert
     match result with
-    | Error (ParseError msg) -> 
+    | Error (ParseError msg) ->
         msg =! "Not found"
-    | _ -> 
+    | _ ->
         Assert.Fail "Expected ParseError"
+}
 
 [<Test>]
-let ``SRTP: ok wrapper for map semantics with Async functions``() =
+let ``SRTP: ok wrapper for map semantics with Async functions``() = task {
     // Arrange - Async functions wrapped with 'ok'
     let fetchAsync (id: string) : Async<Document> = async {
         return { Id = id; Content = $"Async content for {id}" }
@@ -426,17 +430,17 @@ let ``SRTP: ok wrapper for map semantics with Async functions``() =
     }
 
     // Act
-    let result: Result<Document, ProcessingError> = ResultWorkflow.runSync "async-doc" resultWf
-
+    let! result = ResultWorkflow.InProcess.run "async-doc" resultWf
     // Assert
     match result with
     | Ok doc ->
         doc.Id =! "async-doc"
         doc.Content =! "Async content for async-doc"
     | Error _ -> Assert.Fail "Expected Ok result"
+}
 
 [<Test>]
-let ``SRTP: Mixed types in result workflow``() =
+let ``SRTP: Mixed types in result workflow``() = task {
     // Arrange - mix of Task<Result>, Async<Result>, and ResultExecutor
     let taskStep (input: string) : Task<Result<Document, ProcessingError>> = task {
         return Ok { Id = "1"; Content = input }
@@ -457,15 +461,15 @@ let ``SRTP: Mixed types in result workflow``() =
     }
 
     // Act
-    let result = ResultWorkflow.runSync "test input" resultWf
-
+    let! result = ResultWorkflow.InProcess.run "test input" resultWf
     // Assert
     match result with
     | Ok processed -> processed.Summary =! "Done"
     | Error _ -> Assert.Fail "Expected Ok"
+}
 
 [<Test>]
-let ``Backwards compat: Existing ResultExecutor syntax still works``() =
+let ``Backwards compat: Existing ResultExecutor syntax still works``() = task {
     // Arrange - existing API should continue to work
     let parse = ResultExecutor.map "Parse" (fun (raw: string) ->
         { Id = "doc-1"; Content = raw })
@@ -479,10 +483,9 @@ let ``Backwards compat: Existing ResultExecutor syntax still works``() =
     }
 
     // Act
-    let result = ResultWorkflow.runSync "test" resultWf
-
+    let! result = ResultWorkflow.InProcess.run "test" resultWf
     // Assert
     match result with
     | Ok validated -> validated.IsValid =! true
     | Error _ -> Assert.Fail "Expected Ok"
-
+}

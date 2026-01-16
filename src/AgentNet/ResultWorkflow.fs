@@ -152,7 +152,7 @@ type ResultWorkflowState<'input, 'output, 'error> = {
 /// A step type for result workflows that unifies Task<Result>/Async<Result> functions,
 /// TypedAgents, and ResultExecutors.
 /// This enables clean result workflow syntax and mixed-type fanOut operations.
-/// Note: For nested workflows, use ResultWorkflow.toExecutor to convert to ResultExecutor.
+/// Note: For nested workflows, use ResultWorkflow.InProcess.toExecutor to convert to ResultExecutor.
 type ResultStep<'i, 'o, 'e> =
     | TaskResultStep of ('i -> Task<Result<'o, 'e>>)
     | AsyncResultStep of ('i -> Async<Result<'o, 'e>>)
@@ -470,70 +470,70 @@ module ResultWorkflowCE =
 [<RequireQualifiedAccess>]
 module ResultWorkflow =
 
-    /// Executes a single step
-    let private executeStep<'e> (step: ResultWorkflowStep<'e>) (input: obj) (ctx: WorkflowContext) : Task<Result<obj, 'e>> =
-        task {
-            match step with
-            | Step (_, execute) ->
-                return! execute input ctx
+    /// In-process result workflow execution.
+    /// Use this for testing, simple scenarios, or when you don't need durable suspension.
+    module InProcess =
 
-            | Route router ->
-                return! router input ctx
-
-            | Parallel executors ->
-                let! results =
-                    executors
-                    |> List.map (fun exec -> exec input ctx)
-                    |> Task.WhenAll
-
-                // Check for any errors, return first error if found
-                let firstError =
-                    results
-                    |> Array.tryPick (function Error e -> Some e | Ok _ -> None)
-
-                match firstError with
-                | Some e -> return Error e
-                | None ->
-                    let okValues =
-                        results
-                        |> Array.choose (function Ok v -> Some v | Error _ -> None)
-                        |> Array.toList
-                    return Ok (box okValues)
-        }
-
-    /// Runs a result workflow with the given input and context
-    let runWithContext<'input, 'output, 'error> (input: 'input) (ctx: WorkflowContext) (workflow: ResultWorkflowDef<'input, 'output, 'error>) : Task<Result<'output, 'error>> =
-        let rec executeSteps (steps: ResultWorkflowStep<'error> list) (current: obj) : Task<Result<obj, 'error>> =
+        /// Executes a single step
+        let private executeStep<'e> (step: ResultWorkflowStep<'e>) (input: obj) (ctx: WorkflowContext) : Task<Result<obj, 'e>> =
             task {
-                match steps with
-                | [] ->
-                    return Ok current
-                | step :: remaining ->
-                    let! result = executeStep step current ctx
-                    match result with
-                    | Ok value ->
-                        return! executeSteps remaining value
-                    | Error e ->
-                        return Error e  // Short-circuit on error!
+                match step with
+                | Step (_, execute) ->
+                    return! execute input ctx
+
+                | Route router ->
+                    return! router input ctx
+
+                | Parallel executors ->
+                    let! results =
+                        executors
+                        |> List.map (fun exec -> exec input ctx)
+                        |> Task.WhenAll
+
+                    // Check for any errors, return first error if found
+                    let firstError =
+                        results
+                        |> Array.tryPick (function Error e -> Some e | Ok _ -> None)
+
+                    match firstError with
+                    | Some e -> return Error e
+                    | None ->
+                        let okValues =
+                            results
+                            |> Array.choose (function Ok v -> Some v | Error _ -> None)
+                            |> Array.toList
+                        return Ok (box okValues)
             }
 
-        task {
-            let! result = executeSteps workflow.Steps (input :> obj)
-            return ResultHelpers.map unbox<'output> result
-        }
+        /// Runs a result workflow with the given input and context
+        let runWithContext<'input, 'output, 'error> (input: 'input) (ctx: WorkflowContext) (workflow: ResultWorkflowDef<'input, 'output, 'error>) : Task<Result<'output, 'error>> =
+            let rec executeSteps (steps: ResultWorkflowStep<'error> list) (current: obj) : Task<Result<obj, 'error>> =
+                task {
+                    match steps with
+                    | [] ->
+                        return Ok current
+                    | step :: remaining ->
+                        let! result = executeStep step current ctx
+                        match result with
+                        | Ok value ->
+                            return! executeSteps remaining value
+                        | Error e ->
+                            return Error e  // Short-circuit on error!
+                }
 
-    /// Runs a result workflow with the given input (creates a new context)
-    let run<'input, 'output, 'error> (input: 'input) (workflow: ResultWorkflowDef<'input, 'output, 'error>) : Task<Result<'output, 'error>> =
-        let ctx = WorkflowContext.create ()
-        runWithContext input ctx workflow
+            task {
+                let! result = executeSteps workflow.Steps (input :> obj)
+                return ResultHelpers.map unbox<'output> result
+            }
 
-    /// Runs a result workflow synchronously
-    let runSync<'input, 'output, 'error> (input: 'input) (workflow: ResultWorkflowDef<'input, 'output, 'error>) : Result<'output, 'error> =
-        (workflow |> run input).GetAwaiter().GetResult()
+        /// Runs a result workflow with the given input (creates a new context)
+        let run<'input, 'output, 'error> (input: 'input) (workflow: ResultWorkflowDef<'input, 'output, 'error>) : Task<Result<'output, 'error>> =
+            let ctx = WorkflowContext.create ()
+            runWithContext input ctx workflow
 
-    /// Converts a result workflow to a result executor (enables workflow composition)
-    let toExecutor<'input, 'output, 'error> (name: string) (workflow: ResultWorkflowDef<'input, 'output, 'error>) : ResultExecutor<'input, 'output, 'error> =
-        {
-            Name = name
-            Execute = fun input ctx -> runWithContext input ctx workflow
-        }
+        /// Converts a result workflow to a result executor (enables workflow composition)
+        let toExecutor<'input, 'output, 'error> (name: string) (workflow: ResultWorkflowDef<'input, 'output, 'error>) : ResultExecutor<'input, 'output, 'error> =
+            {
+                Name = name
+                Execute = fun input ctx -> runWithContext input ctx workflow
+            }

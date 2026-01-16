@@ -590,8 +590,8 @@ let documentWorkflow = resultWorkflow {
     step (ok saveToDatabase) // Task<...> - wrapped in Ok via 'ok' wrapper
 }
 
-let result = ResultWorkflow.runSync rawInput documentWorkflow
-// Returns: Result<SavedDoc, ValidationError>
+let! result = ResultWorkflow.InProcess.run rawInput documentWorkflow
+// Returns: Task<Result<SavedDoc, ValidationError>>
 // Short-circuits on first Error, no manual error checking needed!
 ```
 
