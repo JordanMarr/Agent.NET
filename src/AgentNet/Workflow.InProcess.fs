@@ -727,58 +727,58 @@ module Workflow =
     let withName<'input, 'output> (name: string) (workflow: WorkflowDef<'input, 'output>) : WorkflowDef<'input, 'output> =
         { workflow with Name = Some name }
 
+    // ============ MAF COMPILATION ============
+
+    /// Converts a PackedTypedStep to a MAF Executor.
+    /// The stepIndex is used to ensure unique executor IDs within a workflow.
+    let private packedStepToMAFExecutor (stepIndex: int) (packed: PackedTypedStep) : MAFExecutor =
+        match packed.Kind with
+        | DurableAwaitEvent eventName ->
+            failwith $"AwaitEvent '{eventName}' cannot be compiled for in-process execution. Use Workflow.Durable.run instead."
+        | DurableDelay duration ->
+            failwith $"Delay ({duration}) cannot be compiled for in-process execution. Use Workflow.Durable.run instead."
+        | Regular | Resilience _ ->
+            // All regular steps and resilience wrappers can use the ExecuteInProcess function
+            let executorId = $"{packed.DurableId}_{stepIndex}"
+            let fn = Func<obj, Task<obj>>(fun input ->
+                let ctx = WorkflowContext.create()
+                packed.ExecuteInProcess input ctx)
+            Interop.ExecutorFactory.CreateStep(executorId, fn)
+
+    /// Compiles a workflow definition to MAF Workflow using WorkflowBuilder.
+    /// Returns a Workflow that can be executed with InProcessExecution.RunAsync.
+    /// If no name is set, uses "Workflow" as the default name.
+    let internal toMAF<'input, 'output> (workflow: WorkflowDef<'input, 'output>) : MAFWorkflow =
+        let name = workflow.Name |> Option.defaultValue "Workflow"
+        // Use packed steps directly (no compilation to erased types)
+        let packedSteps = workflow.TypedSteps
+        match packedSteps with
+        | [] -> failwith "Workflow must have at least one step"
+        | steps ->
+            // Create executors for all packed steps with unique indices
+            let executors = steps |> List.mapi packedStepToMAFExecutor
+
+            match executors with
+            | [] -> failwith "Workflow must have at least one step"
+            | firstExecutor :: restExecutors ->
+                // Build workflow using MAFWorkflowBuilder
+                let mutable builder = MAFWorkflowBuilder(firstExecutor).WithName(name)
+
+                // Add edges between consecutive executors
+                let mutable prev = firstExecutor
+                for exec in restExecutors do
+                    builder <- builder.AddEdge(prev, exec)
+                    prev <- exec
+
+                // Mark the last executor as output
+                builder <- builder.WithOutputFrom(prev)
+
+                // Build and return the workflow
+                builder.Build()
+
     /// In-process workflow execution using MAF InProcessExecution.
     /// Use this for testing, simple scenarios, or when you don't need durable suspension.
     module InProcess =
-
-        // ============ MAF COMPILATION ============
-
-        /// Converts a PackedTypedStep to a MAF Executor.
-        /// The stepIndex is used to ensure unique executor IDs within a workflow.
-        let private packedStepToMAFExecutor (stepIndex: int) (packed: PackedTypedStep) : MAFExecutor =
-            match packed.Kind with
-            | DurableAwaitEvent eventName ->
-                failwith $"AwaitEvent '{eventName}' cannot be compiled for in-process execution. Use Workflow.Durable.run instead."
-            | DurableDelay duration ->
-                failwith $"Delay ({duration}) cannot be compiled for in-process execution. Use Workflow.Durable.run instead."
-            | Regular | Resilience _ ->
-                // All regular steps and resilience wrappers can use the ExecuteInProcess function
-                let executorId = $"{packed.DurableId}_{stepIndex}"
-                let fn = Func<obj, Task<obj>>(fun input ->
-                    let ctx = WorkflowContext.create()
-                    packed.ExecuteInProcess input ctx)
-                Interop.ExecutorFactory.CreateStep(executorId, fn)
-
-        /// Compiles a workflow definition to MAF Workflow using WorkflowBuilder.
-        /// Returns a Workflow that can be executed with InProcessExecution.RunAsync.
-        /// If no name is set, uses "Workflow" as the default name.
-        let toMAF<'input, 'output> (workflow: WorkflowDef<'input, 'output>) : MAFWorkflow =
-            let name = workflow.Name |> Option.defaultValue "Workflow"
-            // Use packed steps directly (no compilation to erased types)
-            let packedSteps = workflow.TypedSteps
-            match packedSteps with
-            | [] -> failwith "Workflow must have at least one step"
-            | steps ->
-                // Create executors for all packed steps with unique indices
-                let executors = steps |> List.mapi packedStepToMAFExecutor
-
-                match executors with
-                | [] -> failwith "Workflow must have at least one step"
-                | firstExecutor :: restExecutors ->
-                    // Build workflow using MAFWorkflowBuilder
-                    let mutable builder = MAFWorkflowBuilder(firstExecutor).WithName(name)
-
-                    // Add edges between consecutive executors
-                    let mutable prev = firstExecutor
-                    for exec in restExecutors do
-                        builder <- builder.AddEdge(prev, exec)
-                        prev <- exec
-
-                    // Mark the last executor as output
-                    builder <- builder.WithOutputFrom(prev)
-
-                    // Build and return the workflow
-                    builder.Build()
 
         // ============ MAF IN-PROCESS EXECUTION ============
 

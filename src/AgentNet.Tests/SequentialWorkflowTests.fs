@@ -240,7 +240,7 @@ let ``Workflow_toMAF compiles sequential workflow to MAF format``() =
         |> Workflow.withName "TestWorkflow"
 
     // Act: Compile to MAF
-    let mafWorkflow = Workflow.InProcess.toMAF myWorkflow
+    let mafWorkflow = Workflow.toMAF myWorkflow
 
     // Assert: MAF workflow was created (basic check - no exceptions)
     test <@ not (isNull (box mafWorkflow)) @>
@@ -295,7 +295,7 @@ let ``Workflow_toMAF works without explicit name (auto-generates)``() =
     }
 
     // Act: Compile to MAF - should not throw, auto-generates name
-    let mafWorkflow = Workflow.InProcess.toMAF unnamedWorkflow
+    let mafWorkflow = Workflow.toMAF unnamedWorkflow
 
     // Assert: MAF workflow was created
     test <@ not (isNull (box mafWorkflow)) @>
