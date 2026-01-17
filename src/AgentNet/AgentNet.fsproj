@@ -41,9 +41,9 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="Microsoft.Agents.AI" Version="1.0.0-preview.*" />
-    <PackageReference Include="Microsoft.Agents.AI.Workflows" Version="1.0.0-preview.*" />
-    <PackageReference Include="Microsoft.Extensions.AI.Abstractions" Version="10.*" />
+    <PackageReference Include="Microsoft.Agents.AI" Version="1.0.0-preview.260108.1" />
+    <PackageReference Include="Microsoft.Agents.AI.Workflows" Version="1.0.0-preview.260108.1" />
+    <PackageReference Include="Microsoft.Extensions.AI.Abstractions" Version="10.2.0" />
   </ItemGroup>
 
   <ItemGroup>

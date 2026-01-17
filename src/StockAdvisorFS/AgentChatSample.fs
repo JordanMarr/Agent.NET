@@ -19,7 +19,7 @@ let private createChatClient () =
     let apiKey = tryGetEnv "ANTHROPIC_API_KEY" |> failIfNone "ANTHROPIC_API_KEY environment variable is not set."
     let model = tryGetEnv "ANTHROPIC_MODEL" |> Option.defaultValue "claude-sonnet-4-20250514"
 
-    let client = AnthropicClient(APIKey = apiKey)
+    let client = new AnthropicClient(ApiKey = apiKey)
     client.AsIChatClient(model)
 
 let private createStockAdvisor (chatClient: IChatClient) =

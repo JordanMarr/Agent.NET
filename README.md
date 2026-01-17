@@ -783,11 +783,20 @@ The `resultWorkflow` CE currently has a simpler implementation than `workflow`. 
 | **Durable execution** | Planned | `ResultWorkflow.Durable.run` for Azure Durable Functions with proper `Result<'ok,'err>` propagation |
 | **Stable durable IDs** | Planned | Generate durable step IDs from function metadata for deterministic replay |
 
+### Workflow State Management
+
+The current `WorkflowContext.State` mechanism needs rework — each step currently receives a fresh context, so state changes don't propagate between steps. A future release will provide proper state management that integrates with MAF's serialization for durable workflows.
+
+| Feature | Status | Description |
+|---------|--------|-------------|
+| **State propagation fix** | Planned | Rework `WorkflowContext` so state set in one step is available to subsequent steps |
+| **Strongly-typed state** | Planned | `Workflow.InProcess.runWithState` and `Workflow.Durable.runWithState` for passing typed state between steps with a friendlier API. Also allows initializing workflows with predefined state. |
+
 ### Other Future Work
 
-- Additional resilience patterns for `resultWorkflow` (retry, timeout, fallback with `Result` semantics)  
-- Improved error aggregation for parallel Result workflows  
-- Tooling for workflow visualization and debugging  
+- Additional resilience patterns for `resultWorkflow` (retry, timeout, fallback with `Result` semantics)
+- Improved error aggregation for parallel Result workflows
+- Tooling for workflow visualization and debugging
 
 ---
 

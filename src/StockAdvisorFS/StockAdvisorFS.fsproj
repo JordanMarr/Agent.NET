@@ -19,12 +19,9 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="DotNetEnv" Version="3.*" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <PackageReference Include="Anthropic" Version="12.*" />
-    <PackageReference Include="Microsoft.Agents.AI.OpenAI" Version="1.0.0-preview.*" />
+    <PackageReference Include="DotNetEnv" Version="3.1.1" />
+    <PackageReference Include="Anthropic" Version="12.2.0" />
+    <PackageReference Include="Microsoft.Agents.AI.OpenAI" Version="1.0.0-preview.260108.1" />
   </ItemGroup>
 
 </Project>

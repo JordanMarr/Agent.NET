@@ -119,7 +119,7 @@ public static class WorkflowSample
             ?? throw new InvalidOperationException("ANTHROPIC_API_KEY environment variable is not set.");
         var model = Environment.GetEnvironmentVariable("ANTHROPIC_MODEL") ?? "claude-sonnet-4-20250514";
 
-        var client = new AnthropicClient { APIKey = apiKey };
+        var client = new AnthropicClient { ApiKey = apiKey };
         return client.AsIChatClient(model);
     }
 
