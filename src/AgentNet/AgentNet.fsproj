@@ -31,7 +31,6 @@
     <Compile Include="Executor.fs" />
     <Compile Include="DurableId.fs" />
     <Compile Include="Workflow.InProcess.fs" />
-    <Compile Include="ResultWorkflow.fs" />
     <Compile Include="AgentFramework.fs" />
   </ItemGroup>
 
