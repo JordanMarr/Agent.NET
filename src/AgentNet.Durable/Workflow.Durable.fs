@@ -106,39 +106,36 @@ module Workflow =
             (input: 'input)
             (workflow: WorkflowDef<'input, 'output, 'error>)
             : Task<Result<'output, 'error>> =
+            let rec runSteps (currentInput: obj) (remaining: IExecutor list) =
+                task {
+                    match remaining with
+                    | [] ->
+                        // No more steps → success
+                        return Ok (convertToOutput<'output> currentInput)
+
+                    | executor :: rest ->
+                        let! result = executor.ExecuteAsync(ctx, currentInput)
+
+                        match result with
+                        | :? EarlyExitReturn as early ->
+                            // Stop immediately
+                            return Error (unbox<'error> early.Error)
+
+                        | output ->
+                            // Continue with next step
+                            return! runSteps output rest
+                }
+
             task {
-                let packedSteps = workflow.TypedSteps
-                match packedSteps with
+                match workflow.TypedSteps with
                 | [] ->
                     return failwith "Workflow must have at least one step"
 
                 | steps ->
-                    // Build durable executors
                     let executors =
                         steps |> List.mapi (fun i packed -> packed.CreateDurableExecutor i)
 
-                    // Execute each step in sequence
-                    let mutable currentInput: obj = box input
-                    let mutable earlyExit: obj option = None
-
-                    for executor in executors do
-                        let! result = executor.ExecuteAsync(ctx, currentInput)
-
-                        // Detect early exit: StepExecutor returned null AND emitted an event
-                        match result with
-                        | :? EarlyExitReturn as ret ->
-                            earlyExit <- Some ret.Error
-                        | _ ->
-                            currentInput <- result
-
-                    // Interpret final outcome
-                    match earlyExit with
-                    | Some error ->
-                        return Error (unbox<'error> error)
-
-                    | None ->
-                        return Ok (convertToOutput<'output> currentInput)
-
+                    return! runSteps (box input) executors
             }
 
 
