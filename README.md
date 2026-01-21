@@ -40,7 +40,7 @@ let! sentiment = analyzeAgent.Invoke message
 ```
 _[Learn more ->](#typedagent-structured-inputoutput-for-workflows)_
 
-### 3. Create workflows (`workflow` / `resultWorkflow`)
+### 3. Create workflows (`workflow`)
 Strongly typed orchestration mixing deterministic .NET code with LLM calls. Run in-process or on Azure Durable Functions.
 
 ```fsharp
@@ -131,7 +131,6 @@ This is the final shape:
 | **ChatAgent** | AI agents with automatic tool metadata extraction from F# quotations |
 | **TypedAgent** | Structured I/O wrapper for type-safe agent integration in workflows |
 | **workflow CE** | Composable pipelines with SRTP type inference, fan-out/fan-in, routing |
-| **resultWorkflow CE** | Railway-oriented programming with automatic error short-circuiting |
 | **Resilience** | Built-in retry, backoff strategies, timeout, and fallback |
 
 All with clean F# syntax - no attributes, no magic strings, no ceremony.
@@ -570,42 +569,73 @@ let result = Workflow.runSync "initial input" myWorkflow
 let! result = Workflow.InProcess.run "initial input" myWorkflow
 ```
 
-### Result Workflows: Railway-Oriented Programming
+## Railway-Oriented Programming with `tryStep`
 
-For workflows where any step can fail, use `resultWorkflow` for automatic short-circuit handling of errors:
+Workflows often need to perform validation or business‑rule checks that may fail.  
+`tryStep` brings Railway-Oriented Programming directly into the main workflow DSL, giving you short‑circuiting error handling without switching to a different computation expression or monadic style.
+
+### When a `tryStep` returns:
+
+- `Ok value` → the workflow continues with `value`  
+- `Error err` → the workflow **exits immediately**, returning `Error err` from `runResult`  
+
+This gives you the classic “railway switch” behavior with minimal ceremony.
+
+### Example
 
 ```fsharp
-// Model custom error types for your workflow (or use a simple string error).
-type ValidationError =
+// Custom error type for the workflow
+type ProcessingError =
     | ParseError of string
-    | ValidationFailed of string
-    | SaveError of string
+    | ValidationError of string
+    | SaveError of int
 
-// Functions that return Task<Result<...>> work directly (bind semantics)
-let parseDocument (raw: string) : Task<Result<Document, ValidationError>> = task { ... }
-let validateSchema (doc: Document) : Task<Result<ValidatedDoc, ValidationError>> = task { ... }
-let addMetadata (doc: ValidatedDoc) : Task<Result<EnrichedDoc, ValidationError>> = task { ... }
+let parse (raw: string) =
+    if raw.Length > 0 then Ok { Id = "doc"; Content = raw }
+    else Error (ParseError "Empty input")
+    |> Task.fromResult
 
-// Functions that DON'T return Result use 'ok' wrapper (map semantics)
-let saveToDatabase (doc: EnrichedDoc) : Task<SavedDoc> = task { ... }
+let validate (doc: Document) =
+    if doc.Content.Contains("valid") then
+        Ok { Doc = doc; IsValid = true; Errors = [] }
+    else
+        Error (ValidationError "Missing 'valid' keyword")
+    |> Task.fromResult
 
-let documentWorkflow = resultWorkflow {
-    step parseDocument       // Task<Result<...>> - auto bind semantics
-    step validateSchema      // Task<Result<...>> - auto bind semantics
-    step addMetadata         // Task<Result<...>> - auto bind semantics
-    step (ok saveToDatabase) // Task<...> - wrapped in Ok via 'ok' wrapper
+let save (validated: ValidatedDoc) =
+    { Doc = validated; WordCount = 1; Summary = "Saved" }
+    |> Ok
+    |> Task.fromResult
+
+let documentWorkflow = workflow {
+    tryStep parse
+    tryStep validate
+    step save
 }
-
-let! result = ResultWorkflow.InProcess.run rawInput documentWorkflow
-// Returns: Task<Result<SavedDoc, ValidationError>>
-// Short-circuits on first Error, no manual error checking needed!
 ```
 
-**Step types:**
-- Functions returning `Task<Result<'o, 'e>>` or `Async<Result<'o, 'e>>` - auto bind semantics
-- Functions returning `Task<'o>` or `Async<'o>` - use `ok` wrapper for map semantics
-- `ResultExecutor<'i, 'o, 'e>` - direct passthrough (for explicit naming or backwards compatibility)
-- `TypedAgent<'i, 'o>` - auto wrapped in Ok
+### Running the workflow
+
+```fsharp
+let! result = Workflow.InProcess.runResult "" documentWorkflow
+```
+
+- If any `tryStep` returns `Error`, the workflow stops immediately  
+- `runResult` returns `Result<'ok, 'err>`  
+- `run` (without `Result`) throws an internal early‑exit signal instead — useful for Durable orchestrators  
+
+### Why `tryStep` feels so natural
+
+- **No monadic boilerplate** — you stay in the main `workflow` CE  
+- **No type contagion** — only the steps that need `Result` use it  
+- **Clear, predictable control flow** — early exit is explicit and typed  
+- **Works everywhere** — InProcess and Durable runners share the same semantics  
+
+### Step types supported by `tryStep`
+
+- Functions returning `Task<Result<'o,'e>>` or `Async<Result<'o,'e>>`  
+- `TypedAgent<'i,'o>` (automatically wrapped in `Ok`)  
+- Any normal step can follow a `tryStep` — the workflow only exits when a `tryStep` returns `Error`  
 
 ---
 
@@ -626,7 +656,6 @@ let! result = ResultWorkflow.InProcess.run rawInput documentWorkflow
 | `Executor<'i,'o>` | Workflow step that transforms input to output |
 | `WorkflowDef<'i,'o>` | Composable workflow definition |
 | `ResultExecutor<'i,'o,'e>` | Executor returning `Result<'o,'e>` |
-| `ResultWorkflowDef<'i,'o,'e>` | Workflow with error short-circuiting |
 
 ### Tool Functions
 
@@ -656,6 +685,7 @@ TypedAgent.invoke: 'i -> TypedAgent<'i,'o> -> Task<'o>
 | Keyword | Description |
 |---------|-------------|
 | `step` | Add a step to the workflow |
+| `tryStep` | Execute a step that returns Result; short‑circuits the workflow on Error |
 | `fanOut` | Execute multiple executors in parallel |
 | `fanIn` | Combine parallel results into one |
 | `route` | Conditional routing based on pattern matching |
@@ -772,17 +802,6 @@ Contributions are welcome! Please feel free to submit issues and pull requests.
 
 ## Roadmap
 
-### ResultWorkflow Enhancements
-
-The `resultWorkflow` CE currently has a simpler implementation than `workflow`. These planned improvements bring it closer to full parity while preserving its Result‑centric semantics.
-
-| Feature | Status | Description |
-|---------|--------|-------------|
-| **Auto step naming** | Planned | Extract function names via IL inspection (matching `workflow`) instead of `Step 1`, `Step 2` |
-| **Lambda warnings** | Planned | Warn when anonymous lambdas are used, encouraging named functions for clarity and stable IDs |
-| **Durable execution** | Planned | `ResultWorkflow.Durable.run` for Azure Durable Functions with proper `Result<'ok,'err>` propagation |
-| **Stable durable IDs** | Planned | Generate durable step IDs from function metadata for deterministic replay |
-
 ### Workflow State Management
 
 The current `WorkflowContext.State` mechanism needs rework — each step currently receives a fresh context, so state changes don't propagate between steps. A future release will provide proper state management that integrates with MAF's serialization for durable workflows.
@@ -791,12 +810,6 @@ The current `WorkflowContext.State` mechanism needs rework — each step current
 |---------|--------|-------------|
 | **State propagation fix** | Planned | Rework `WorkflowContext` so state set in one step is available to subsequent steps |
 | **Strongly-typed state** | Planned | `Workflow.InProcess.runWithState` and `Workflow.Durable.runWithState` for passing typed state between steps with a friendlier API. Also allows initializing workflows with predefined state. |
-
-### Other Future Work
-
-- Additional resilience patterns for `resultWorkflow` (retry, timeout, fallback with `Result` semantics)
-- Improved error aggregation for parallel Result workflows
-- Tooling for workflow visualization and debugging
 
 ---
 
