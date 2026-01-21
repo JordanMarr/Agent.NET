@@ -126,19 +126,6 @@ This is the final shape:
 
 ---
 
-## What's Included
-
-| Feature | Description |
-|---------|-------------|
-| **ChatAgent** | AI agents with automatic tool metadata extraction from F# quotations |
-| **TypedAgent** | Structured I/O wrapper for type-safe agent integration in workflows |
-| **workflow CE** | Composable pipelines with SRTP type inference, fan-out/fan-in, routing |
-| **Resilience** | Built-in retry, backoff strategies, timeout, and fallback |
-
-All with clean F# syntax - no attributes, no magic strings, no ceremony.
-
----
-
 ## Installation
 
 **AgentNet** — Agents and in-process workflows
