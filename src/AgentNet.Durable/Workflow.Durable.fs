@@ -141,7 +141,7 @@ module Workflow =
         /// Runs a workflow within a durable orchestration context, catching EarlyExitException.
         /// Returns Task because Azure Durable cannot serialize a Result discriminated union.
         /// Use this when you don't need to return a value from the workflow.
-        let tryRunUnit<'input, 'output, 'error>
+        let tryRunIgnore<'input, 'output, 'error>
             (ctx: TaskOrchestrationContext)
             (input: 'input)
             (workflow: WorkflowDef<'input, 'output, 'error>)

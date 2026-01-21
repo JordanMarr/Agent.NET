@@ -625,6 +625,17 @@ TypedAgent.invoke: 'i -> TypedAgent<'i,'o> -> Task<'o>
 | `fallback` | Use alternative executor on failure |
 | `backoff` | Set retry delay strategy |
 
+### Workflow Functions
+
+| Function | Description |
+|---------|-------------|
+| `Workflow.InProcess.run` | Runs a workflow in‑process and returns the final output. Throws on `tryStep` errors. |
+| `Workflow.InProcess.tryRun` | Runs a workflow in‑process and returns `Result<'output,'error>` with early‑exit handling. |
+| `Workflow.Durable.run` | Runs a workflow inside a Durable Functions orchestrator. Throws on `tryStep` errors. |
+| `Workflow.Durable.tryRun` | Durable‑safe version of `tryRun`; returns `Result<'output,'error>` instead of throwing. |
+| `Workflow.Durable.tryRunIgnore` | Use when your Durable orchestrator delegates to a workflow but doesn’t need to return a value. This avoids Durable’s restriction on serializing F# discriminated unions. |
+
+
 ---
 
 ## XML Documentation Format
