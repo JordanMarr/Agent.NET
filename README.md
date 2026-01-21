@@ -217,6 +217,13 @@ _Learn more: [Workflows: computation expression for orchestration ->](#workflows
 
 ## Features
 
+### Railway‑Oriented Programming (`tryStep`)
+
+`tryStep` brings typed early‑exit semantics into the `workflow` DSL.
+Use it when a step may return a `Result` and you want the workflow to short‑circuit on `Error`.
+
+[Learn more →](#railway-oriented-programming-with-trystep)
+
 ### Tools: Quotation-Based Metadata Extraction
 
 The `<@ @>` quotation syntax captures your function and extracts all metadata automatically:
@@ -655,7 +662,6 @@ let! result = Workflow.InProcess.runResult "" documentWorkflow
 | `ChatRole` | Union type: User, Assistant, System, Tool |
 | `Executor<'i,'o>` | Workflow step that transforms input to output |
 | `WorkflowDef<'i,'o>` | Composable workflow definition |
-| `ResultExecutor<'i,'o,'e>` | Executor returning `Result<'o,'e>` |
 
 ### Tool Functions
 
