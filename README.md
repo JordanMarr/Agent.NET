@@ -590,26 +590,25 @@ let! result = Workflow.InProcess.tryRun documentWorkflow
 
 ### Tool Functions
 
-```fsharp
-Tool.create: Expr<'a -> 'b> -> ToolDef
-Tool.createWithDocs: Expr<'a -> 'b> -> ToolDef  // Extracts XML docs
-Tool.describe: string -> ToolDef -> ToolDef
-```
+| Function | Description |
+|---------|-------------|
+| `Tool.create` | Creates a tool from an F# function using a quotation. |
+| `Tool.createWithDocs` | Creates a tool and extracts XML documentation from the quoted function. |
+| `Tool.describe` | Overrides or adds a description for a tool. |
+
 
 ### Agent Functions
 
-```fsharp
-// ChatAgent - for interactive chat
-ChatAgent.create: string -> ChatAgentConfig                              // Instructions
-ChatAgent.withName: string -> ChatAgentConfig -> ChatAgentConfig
-ChatAgent.withTool: ToolDef -> ChatAgentConfig -> ChatAgentConfig
-ChatAgent.withTools: ToolDef list -> ChatAgentConfig -> ChatAgentConfig
-ChatAgent.build: IChatClient -> ChatAgentConfig -> ChatAgent
+| Function | Description |
+|---------|-------------|
+| `ChatAgent.create` | Creates a chat agent configuration with the given instruction string. |
+| `ChatAgent.withName` | Assigns a display name to the agent. |
+| `ChatAgent.withTool` | Adds a single tool to the agent configuration. |
+| `ChatAgent.withTools` | Adds multiple tools to the agent configuration. |
+| `ChatAgent.build` | Builds a `ChatAgent` using an `IChatClient` and the configuration. |
+| `TypedAgent.create` | Wraps a `ChatAgent` with format/parse functions for typed input/output. |
+| `TypedAgent.invoke` | Invokes a typed agent: structured input in, structured output out. |
 
-// TypedAgent - for structured workflows
-TypedAgent.create: ('i -> string) -> ('i -> string -> 'o) -> ChatAgent -> TypedAgent<'i,'o>
-TypedAgent.invoke: 'i -> TypedAgent<'i,'o> -> Task<'o>
-```
 
 ### Workflow CE Keywords
 
@@ -667,7 +666,7 @@ See the [StockAdvisorFS](./src/StockAdvisorFS) sample project for a complete exa
 Agent.NET's `workflow` CE is a **semantic layer** for Microsoft Agent Framework (MAF). Define your workflow once in expressive F#, then choose how to run it:
 
 ```fsharp
-let stockAnalysis = workflow {
+let stockAnalysisWF = workflow {
     step fetchStockData
     fanOut technicalAnalysis fundamentalAnalysis sentimentAnalysis
     fanIn synthesizeReports
@@ -675,10 +674,10 @@ let stockAnalysis = workflow {
 }
 
 // In-memory execution (quick-running workflows)
-let! result = Workflow.InProcess.run input stockAnalysis
+let! result = Workflow.InProcess.run input stockAnalysisWF
 
 // MAF durable execution (long-running, durable workflows)
-let mafWorkflow = Workflow.Durable.run ctx request stockAnalysis
+let! result = Workflow.Durable.run ctx input stockAnalysisWF
 ```
 
 ### Why a Semantic Layer?
