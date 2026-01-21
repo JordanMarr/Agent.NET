@@ -1,4 +1,4 @@
-namespace AgentNet
+﻿namespace AgentNet
 
 open System
 open System.Threading.Tasks
@@ -11,11 +11,6 @@ type MAFWorkflow = Microsoft.Agents.AI.Workflows.Workflow
 type MAFWorkflowBuilder = Microsoft.Agents.AI.Workflows.WorkflowBuilder
 type MAFInProcessExecution = Microsoft.Agents.AI.Workflows.InProcessExecution
 type MAFExecutorCompletedEvent = Microsoft.Agents.AI.Workflows.ExecutorCompletedEvent
-
-/// Internal signal for early-exit from a workflow step.
-/// Carries a boxed error payload that can be surfaced as Result<'output, 'error>
-/// by result-oriented runners.
-exception EarlyExitException of error: obj
 
 /// A typed workflow step that preserves input/output type information.
 /// This is the single source of truth for both definition and execution.
@@ -360,7 +355,7 @@ module PackedTypedStep =
                     return value :> obj
                 | Error error ->
                     // Signal early-exit with structured error payload
-                    return raise (EarlyExitException(error))
+                    return EarlyExitSignal error :> obj
             }
             let durableExecFactory = fun (stepIndex: int) ->
                 let wrappedFn = Func<obj, Task<obj>>(fun input ->
@@ -372,7 +367,8 @@ module PackedTypedStep =
                         | Ok value ->
                             return value :> obj
                         | Error error ->
-                            return raise (EarlyExitException(error))
+                            // Signal early-exit with structured error payload
+                            return EarlyExitSignal error :> obj
                     })
                 Interop.ExecutorFactory.CreateStepExecutor(durableId, stepIndex, wrappedFn)
             {
@@ -388,7 +384,7 @@ module PackedTypedStep =
                         let! result = execute typedInput ctx
                         match result with
                         | Ok value -> return value :> obj
-                        | Error error -> return raise (EarlyExitException(error))
+                        | Error error -> return EarlyExitSignal error :> obj
                     })
                 InnerStep = None
                 FallbackStep = None
@@ -960,6 +956,7 @@ module Workflow =
 
         /// Runs a workflow via MAF InProcessExecution.
         /// The workflow is compiled to MAF format and executed in-process.
+        /// DO NOT CHANGE THIS FUNCTION UNLESS EXPLICIT INSTRUCTIONS ARE GIVEN.
         let run<'input, 'output, 'error> (input: 'input) (workflow: WorkflowDef<'input, 'output, 'error>) : Task<'output> =
             task {
                 // Compile to MAF workflow
@@ -984,14 +981,36 @@ module Workflow =
 
         /// Runs a workflow via MAF InProcessExecution, catching EarlyExitException.
         /// Returns Result<'output, 'error> where Error contains the typed error from tryStep.
+        /// DO NOT CHANGE THIS FUNCTION UNLESS EXPLICIT INSTRUCTIONS ARE GIVEN.
         let runResult<'input, 'output, 'error> (input: 'input) (workflow: WorkflowDef<'input, 'output, 'error>) : Task<Result<'output, 'error>> =
             task {
-                try
-                    let! output = run input workflow
-                    return Ok output
-                with
-                | EarlyExitException error ->
+                let mafWorkflow = toMAF workflow
+                let! run = MAFInProcessExecution.RunAsync(mafWorkflow, input :> obj)
+                use _ = run
+                
+                let mutable completed = None
+                let mutable earlyExit = None
+
+                for evt in run.NewEvents do
+                    match evt with
+                    | :? MAFExecutorCompletedEvent as ok ->
+                        completed <- Some ok.Data
+
+                    | :? ExecutorEarlyExitEvent as early ->
+                        earlyExit <- Some early.Error
+
+                    | _ -> ()
+
+                match completed, earlyExit with
+                | Some data, _ ->
+                    return Ok (convertToOutput<'output> data)
+
+                | None, Some error ->
                     return Error (unbox<'error> error)
+
+                | None, None ->
+                    return failwith "Workflow terminated without success or early exit."
+
             }
 
         /// Converts a workflow to an executor (enables workflow composition).

@@ -1,4 +1,4 @@
-namespace AgentNet.Durable
+﻿namespace AgentNet.Durable
 
 open System
 open System.Threading.Tasks
@@ -106,12 +106,38 @@ module Workflow =
             (workflow: WorkflowDef<'input, 'output, 'error>)
             : Task<Result<'output, 'error>> =
             task {
-                try
-                    let! output = run ctx input workflow
-                    return Ok output
-                with
-                | EarlyExitException error ->
-                    return Error (unbox<'error> error)
+                let packedSteps = workflow.TypedSteps
+                match packedSteps with
+                | [] ->
+                    return failwith "Workflow must have at least one step"
+
+                | steps ->
+                    // Build durable executors
+                    let executors =
+                        steps |> List.mapi (fun i packed -> packed.CreateDurableExecutor i)
+
+                    // Execute each step in sequence
+                    let mutable currentInput: obj = box input
+                    let mutable earlyExit: obj option = None
+
+                    for executor in executors do
+                        let! result = executor.ExecuteAsync(ctx, currentInput)
+
+                        // Detect early exit: StepExecutor returned null AND emitted an event
+                        match result with
+                        | :? EarlyExitReturn as ret ->
+                            earlyExit <- Some ret.Error
+                        | _ ->
+                            currentInput <- result
+
+                    // Interpret final outcome
+                    match earlyExit with
+                    | Some error ->
+                        return Error (unbox<'error> error)
+
+                    | None ->
+                        return Ok (convertToOutput<'output> currentInput)
+
             }
 
 

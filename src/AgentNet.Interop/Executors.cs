@@ -31,6 +31,45 @@ public interface IExecutor
 }
 
 /// <summary>
+/// Signal to indicate early exit from an executor.
+/// </summary>
+/// <param name="error"></param>
+public sealed class EarlyExitSignal(object error)
+{
+    /// <summary>
+    /// The error object associated with the early exit.
+    /// </summary>
+    public object Error { get; } = error;
+}
+
+/// <summary>
+/// Required for early return from durable executor.
+/// </summary>
+/// <param name="error"></param>
+public class EarlyExitReturn(object error)
+{
+    /// <summary>
+    /// The error object associated with the early exit.
+    /// </summary>
+    public object Error { get; } = error;
+
+}
+
+/// <summary>
+/// Event indicating early exit from an executor due to an F# `Result` type Error.
+/// </summary>
+public class ExecutorEarlyExitEvent(string executorId, object error) 
+    : ExecutorEvent(executorId, error)
+{
+    /// <summary>
+    /// The error object associated with the early exit.
+    /// This is already exposed via base.Data, but we add a typed property for convenience.
+    /// </summary>
+    public object Error { get; } = error;
+}
+ 
+
+/// <summary>
 /// Durable step executor using primary constructor pattern.
 /// Does NOT capture TaskOrchestrationContext - receives it at execution time.
 /// </summary>
@@ -43,8 +82,19 @@ public sealed class DurableStepExecutor(
     public string Id { get; } = id;
 
     /// <inheritdoc/>
-    public Task<object?> ExecuteAsync(TaskOrchestrationContext ctx, object? input)
-        => fn(ctx, input);
+    public async Task<object?> ExecuteAsync(TaskOrchestrationContext ctx, object? input)
+    {
+        var result = await fn(ctx, input);
+
+        if (result is EarlyExitSignal signal)
+        {
+            // Durable cannot emit MAF events. 
+            // Durable must return a sentinel.
+            return new EarlyExitReturn(signal.Error);
+        }
+
+        return result;
+    }
 }
 
 // ============================================================================
@@ -76,6 +126,15 @@ public class StepExecutor(string name, Func<object, Task<object>> execute) : Exe
             throw new ArgumentNullException(nameof(input), "StepExecutor received null input");
         }
         var result = await execute(actualInput);
+
+        if (result is EarlyExitSignal signal)
+        {
+            // Emit early-exit event
+            await context.AddEventAsync(new ExecutorEarlyExitEvent(this.Id, signal.Error), ct);
+
+            return null; // prevents ExecutorCompletedEvent
+        }
+
         return result;
     }
 }
@@ -100,8 +159,9 @@ public class ParallelExecutor(string name, IReadOnlyList<Func<object, Task<objec
         {
             throw new ArgumentNullException(nameof(input), "ParallelExecutor received null input");
         }
+
         var tasks = branches.Select(b => b(actualInput)).ToArray();
-        var results = await System.Threading.Tasks.Task.WhenAll(tasks);
+        var results = await Task.WhenAll(tasks);
         return results.ToList();
     }
 }
