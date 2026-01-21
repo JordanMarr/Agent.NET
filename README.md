@@ -26,6 +26,8 @@ let agent =
     ChatAgent.create "You are a helpful assistant."
     |> ChatAgent.withTools [searchTool; calculatorTool]
     |> ChatAgent.build chatClient
+
+let! text = agent.Chat("Summarize the latest quarterly report.")
 ```
 _[Learn more ->](#tools-quotation-based-metadata-extraction)_
 
@@ -148,70 +150,6 @@ dotnet add package AgentNet
 ```bash
 dotnet add package AgentNet.Durable
 ```
-
----
-
-## Quick Start
-
-### 1. Build a ChatAgent
-
-Create a simple `ChatAgent` that works on strings:
-
-```fsharp
-open AgentNet
-
-let summarizerAgent =
-    ChatAgent.create "You summarize articles into concise bullet points."
-    |> ChatAgent.withName "Summarizer"
-    |> ChatAgent.build chatClient   // any IChatClient implementation
-
-// Shape: string -> Task<string>
-let! text = summarizerAgent.Chat("Summarize the latest quarterly report.")
-```
-
-_Learn more: [ChatAgent: pipeline-style configuration ->](#chatagent-pipeline-style-configuration)_
-
-> `ChatAgent` values always have the shape `string -> Task<string>`. To use them inside a
-> typed workflow, you adapt them into `TypedAgent<'i,'o>` by providing format/parse functions.
-
-### 2. Wrap it as a TypedAgent
-
-Turn the string-based agent into a typed function that can be composed into the workflow:
-
-```fsharp
-// Typed domain model
-type Article = { Id: string; Title: string; Body: string }
-type Summary = { Title: string; Summary: string }
-
-// Format typed input into a prompt
-let formatArticle (article: Article) =
-    $"Summarize the following article titled '{article.Title}':\n\n{article.Body}"
-
-// Parse the model response back into a typed result
-let parseSummary (article: Article) (response: string) : Summary =
-    { Title = article.Title; Summary = response }
-
-let typedSummarizer : TypedAgent<Article, Summary> =
-    TypedAgent.create formatArticle parseSummary summarizerAgent
-```
-
-_Learn more: [TypedAgent: structured input/output for workflows ->](#typedagent-structured-inputoutput-for-workflows)_
-
-### 3. Compose a workflow
-
-Use deterministic steps around the `TypedAgent` inside a workflow:
-
-```fsharp
-let summarizationWorkflow = workflow {
-    step loadArticleFromDb   // string -> Task<Article>
-    step typedSummarizer     // Article -> Task<Summary>
-    step saveSummaryToDb     // Summary -> Task<unit>
-}
-
-let! result = Workflow.InProcess.run "article-123" summarizationWorkflow
-```
-
-_Learn more: [Workflows: computation expression for orchestration ->](#workflows-computation-expression-for-orchestration)_
 
 ---
 
