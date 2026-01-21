@@ -979,10 +979,10 @@ module Workflow =
                 | None -> return failwith "Workflow did not produce output. No ExecutorCompletedEvent found."
             }
 
+        // AGENTS: DO NOT CHANGE THIS FUNCTION UNLESS EXPLICIT INSTRUCTIONS ARE GIVEN TO DO SO.
         /// Runs a workflow via MAF InProcessExecution, catching EarlyExitException.
         /// Returns Result<'output, 'error> where Error contains the typed error from tryStep.
-        /// DO NOT CHANGE THIS FUNCTION UNLESS EXPLICIT INSTRUCTIONS ARE GIVEN.
-        let runResult<'input, 'output, 'error> (input: 'input) (workflow: WorkflowDef<'input, 'output, 'error>) : Task<Result<'output, 'error>> =
+        let tryRun<'input, 'output, 'error> (input: 'input) (workflow: WorkflowDef<'input, 'output, 'error>) : Task<Result<'output, 'error>> =
             task {
                 let mafWorkflow = toMAF workflow
                 let! run = MAFInProcessExecution.RunAsync(mafWorkflow, input :> obj)

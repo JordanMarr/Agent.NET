@@ -46,7 +46,7 @@ let ``tryStep succeeds when all steps return Ok``() = task {
     }
 
     // Act
-    let! result = Workflow.InProcess.runResult "Hello world from F#" wf
+    let! result = Workflow.InProcess.tryRun "Hello world from F#" wf
 
     // Assert
     match result with
@@ -87,7 +87,7 @@ let ``tryStep short-circuits on first Error``() = task {
     }
 
     // Act
-    let! result = Workflow.InProcess.runResult "test input" wf
+    let! result = Workflow.InProcess.tryRun "test input" wf
 
     // Assert
     step1Called =! true
@@ -128,19 +128,19 @@ let ``tryStep with multiple error types in chain - all same error type``() = tas
     }
 
     // Act & Assert: ParseError case
-    let! parseResult = Workflow.InProcess.runResult "" wf
+    let! parseResult = Workflow.InProcess.tryRun "" wf
     match parseResult with
     | Error (ParseError _) -> ()
     | _ -> Assert.Fail "Expected ParseError"
 
     // Act & Assert: ValidationError case (note: "bad content" does not contain "valid")
-    let! validateResult = Workflow.InProcess.runResult "bad content" wf
+    let! validateResult = Workflow.InProcess.tryRun "bad content" wf
     match validateResult with
     | Error (ValidationError _) -> ()
     | _ -> Assert.Fail "Expected ValidationError"
 
     // Act & Assert: Success case
-    let! successResult = Workflow.InProcess.runResult "valid content" wf
+    let! successResult = Workflow.InProcess.tryRun "valid content" wf
     match successResult with
     | Ok processed -> processed.Summary =! "Saved"
     | _ -> Assert.Fail "Expected Ok"
@@ -171,7 +171,7 @@ let ``step followed by tryStep works correctly``() = task {
     }
 
     // Act - long input
-    //let! longResult = Workflow.InProcess.runResult "Hello World" wf
+    //let! longResult = Workflow.InProcess.tryRun "Hello World" wf
     //match longResult with
     //| Ok validated ->
     //    validated.Doc.Content =! "HELLO WORLD"
@@ -179,7 +179,7 @@ let ``step followed by tryStep works correctly``() = task {
     //| Error _ -> Assert.Fail "Expected Ok for long content"
 
     // Act - short input
-    let! shortResult = Workflow.InProcess.runResult "Hi" wf
+    let! shortResult = Workflow.InProcess.tryRun "Hi" wf
     match shortResult with
     | Error (ValidationError (_, reason)) -> reason =! "Content too short"
     | _ -> Assert.Fail "Expected ValidationError for short content"
@@ -206,7 +206,7 @@ let ``tryStep followed by step short-circuits correctly``() = task {
     }
 
     // Act - success case
-    let! successResult = Workflow.InProcess.runResult "test" wf
+    let! successResult = Workflow.InProcess.tryRun "test" wf
     stepCalled =! true
     match successResult with
     | Ok processed -> processed.Summary =! "Done"
@@ -214,7 +214,7 @@ let ``tryStep followed by step short-circuits correctly``() = task {
 
     // Reset and test error case
     stepCalled <- false
-    let! errorResult = Workflow.InProcess.runResult "" wf
+    let! errorResult = Workflow.InProcess.tryRun "" wf
     stepCalled =! false  // step should NOT be called
     match errorResult with
     | Error (ParseError _) -> ()
@@ -239,8 +239,8 @@ let ``tryStep works with Async Result functions``() = task {
     let wf = workflow { tryStep validateAsync }
 
     // Act
-    let! successResult = Workflow.InProcess.runResult "Hello" wf
-    let! failResult = Workflow.InProcess.runResult "Hi" wf
+    let! successResult = Workflow.InProcess.tryRun "Hello" wf
+    let! failResult = Workflow.InProcess.tryRun "Hi" wf
 
     // Assert
     match successResult with
@@ -254,35 +254,11 @@ let ``tryStep works with Async Result functions``() = task {
 
 
 // =============================================================================
-// runResult vs run behavior
+// tryRun vs run behavior
 //// =============================================================================
 
-//[<Test>]
-//let ``run throws on tryStep Error, runResult returns Error``() = task {
-//    // Arrange
-//    let failingStep (input: string) : Task<Result<Document, ProcessingError>> = task {
-//        return Error (ParseError "Intentional failure")
-//    }
-
-//    let wf = workflow { tryStep failingStep }
-
-//    // Act & Assert - runResult returns Error
-//    let! resultResult = Workflow.InProcess.runResult "test" wf
-//    match resultResult with
-//    | Error (ParseError msg) -> msg =! "Intentional failure"
-//    | _ -> Assert.Fail "Expected ParseError"
-
-//    // Act & Assert - run throws EarlyExitException
-//    try
-//        let! _ = Workflow.InProcess.run "test" wf
-//        Assert.Fail "Expected exception"
-//    with
-//    | :? EarlyExitException -> ()
-//    | ex -> Assert.Fail $"Expected EarlyExitException, got {ex.GetType().Name}"
-//}
-
 [<Test>]
-let ``runResult returns Ok when workflow succeeds``() = task {
+let ``tryRun returns Ok when workflow succeeds``() = task {
     // Arrange
     let successStep (x: int) : Task<Result<string, ProcessingError>> = task {
         return Ok $"Value: {x}"
@@ -291,7 +267,7 @@ let ``runResult returns Ok when workflow succeeds``() = task {
     let wf = workflow { tryStep successStep }
 
     // Act
-    let! result = Workflow.InProcess.runResult 42 wf
+    let! result = Workflow.InProcess.tryRun 42 wf
 
     // Assert
     result =! (Ok "Value: 42")
@@ -368,7 +344,7 @@ let ``tryStep error type is correctly unified across steps``() = task {
     }
 
     // Act
-    let! result = Workflow.InProcess.runResult 42 wf
+    let! result = Workflow.InProcess.tryRun 42 wf
 
     // Assert
     match result with

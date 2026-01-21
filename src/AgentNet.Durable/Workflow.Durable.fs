@@ -98,9 +98,10 @@ module Workflow =
                     return convertToOutput<'output> currentInput
             }
 
+        // AGENTS: DO NOT CHANGE THIS FUNCTION UNLESS EXPLICIT INSTRUCTIONS ARE GIVEN TO DO SO.
         /// Runs a workflow within a durable orchestration context, catching EarlyExitException.
         /// Returns Result<'output, 'error> where Error contains the typed error from tryStep.
-        let runResult<'input, 'output, 'error>
+        let tryRun<'input, 'output, 'error>
             (ctx: TaskOrchestrationContext)
             (input: 'input)
             (workflow: WorkflowDef<'input, 'output, 'error>)
