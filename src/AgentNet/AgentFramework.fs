@@ -1,6 +1,7 @@
 namespace AgentNet
 
 open System.Collections.Generic
+open System.Threading
 open Microsoft.Agents.AI
 open Microsoft.Extensions.AI
 
@@ -40,16 +41,17 @@ module MAF =
     /// Builds a fully functional ChatAgent from config and chat client
     let build (chatClient: IChatClient) (config: ChatAgentConfig) : ChatAgent =
         let mafAgent = createAgent chatClient config
-        let thread = mafAgent.GetNewThread()
 
         {
             Config = config
             Chat = fun message -> task {
-                let! response = mafAgent.RunAsync(message, thread)
+                let! session = mafAgent.CreateSessionAsync(CancellationToken.None)
+                let! response = mafAgent.RunAsync(message, session, null, CancellationToken.None)
                 return response.Text
             }
             ChatFull = fun message -> task {
-                let! response = mafAgent.RunAsync(message, thread)
+                let! session = mafAgent.CreateSessionAsync(CancellationToken.None)
+                let! response = mafAgent.RunAsync(message, session, null, CancellationToken.None)
                 // Return the user message and assistant response
                 let messages : AgentNet.ChatMessage list = [
                     { Role = AgentNet.ChatRole.User; Content = message }

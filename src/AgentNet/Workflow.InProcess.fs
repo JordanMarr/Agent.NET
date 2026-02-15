@@ -963,8 +963,7 @@ module Workflow =
                 let mafWorkflow = toMAF workflow
 
                 // Run via InProcessExecution
-                let! run = MAFInProcessExecution.RunAsync(mafWorkflow, input :> obj)
-                use _ = run
+                let! run = MAFInProcessExecution.Lockstep.RunAsync(mafWorkflow, input :> obj, null, System.Threading.CancellationToken.None)
 
                 // Find the last ExecutorCompletedEvent - it should be the workflow output
                 let mutable lastResult: obj option = None
@@ -973,6 +972,8 @@ module Workflow =
                     | :? MAFExecutorCompletedEvent as completed ->
                         lastResult <- Some completed.Data
                     | _ -> ()
+
+                do! run.DisposeAsync()
 
                 match lastResult with
                 | Some data -> return convertToOutput<'output> data
@@ -985,9 +986,8 @@ module Workflow =
         let tryRun<'input, 'output, 'error> (input: 'input) (workflow: WorkflowDef<'input, 'output, 'error>) : Task<Result<'output, 'error>> =
             task {
                 let mafWorkflow = toMAF workflow
-                let! run = MAFInProcessExecution.RunAsync(mafWorkflow, input :> obj)
-                use _ = run
-                
+                let! run = MAFInProcessExecution.Lockstep.RunAsync(mafWorkflow, input :> obj, null, System.Threading.CancellationToken.None)
+
                 let mutable completed = None
                 let mutable earlyExit = None
 
@@ -1000,6 +1000,8 @@ module Workflow =
                         earlyExit <- Some early.Error
 
                     | _ -> ()
+
+                do! run.DisposeAsync()
 
                 match completed, earlyExit with
                 | _, Some error ->
