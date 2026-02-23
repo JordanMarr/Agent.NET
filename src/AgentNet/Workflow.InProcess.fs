@@ -10,7 +10,7 @@ type MAFExecutor = Microsoft.Agents.AI.Workflows.Executor
 type MAFWorkflow = Microsoft.Agents.AI.Workflows.Workflow
 type MAFWorkflowBuilder = Microsoft.Agents.AI.Workflows.WorkflowBuilder
 type MAFInProcessExecution = Microsoft.Agents.AI.Workflows.InProcessExecution
-type MAFExecutorCompletedEvent = Microsoft.Agents.AI.Workflows.ExecutorCompletedEvent
+type MAFWorkflowOutputEvent = Microsoft.Agents.AI.Workflows.WorkflowOutputEvent
 
 /// A typed workflow step that preserves input/output type information.
 /// This is the single source of truth for both definition and execution.
@@ -50,6 +50,8 @@ type PackedTypedStep = {
     Name: string
     /// The kind of step (for execution routing)
     Kind: StepKind
+    /// The concrete output type of this step (for MAF protocol declaration)
+    OutputType: System.Type
     /// Execute this step in-process (types captured in closure)
     ExecuteInProcess: obj -> WorkflowContext -> Task<obj>
     /// Factory to create a durable executor (types captured in closure, no reflection needed)
@@ -141,6 +143,7 @@ module PackedTypedStep =
                 DurableId = durableId
                 Name = name
                 Kind = Regular
+                OutputType = typeof<'o>
                 ExecuteInProcess = inProcessExec
                 CreateDurableExecutor = fun stepIndex -> durableFactory stepIndex durableId
                 ActivityInfo = Some (durableId, fun input ->
@@ -173,6 +176,7 @@ module PackedTypedStep =
                 DurableId = durableId
                 Name = "Route"
                 Kind = Regular
+                OutputType = typeof<'o>
                 ExecuteInProcess = inProcessExec
                 CreateDurableExecutor = durableExecFactory
                 ActivityInfo = Some (durableId, fun input ->
@@ -220,6 +224,7 @@ module PackedTypedStep =
                 DurableId = parallelId
                 Name = "Parallel"
                 Kind = Regular
+                OutputType = typeof<'o>
                 ExecuteInProcess = inProcessExec
                 CreateDurableExecutor = durableExecFactory
                 ActivityInfo = None  // Parallel doesn't register as a single activity
@@ -239,6 +244,7 @@ module PackedTypedStep =
                 DurableId = durableId
                 Name = $"AwaitEvent({eventName})"
                 Kind = DurableAwaitEvent eventName
+                OutputType = typeof<'o>
                 ExecuteInProcess = inProcessExec
                 CreateDurableExecutor = durableExecFactory
                 ActivityInfo = None  // AwaitEvent is not an activity
@@ -255,6 +261,7 @@ module PackedTypedStep =
                 DurableId = durableId
                 Name = $"Delay({duration})"
                 Kind = DurableDelay duration
+                OutputType = typeof<'o>
                 ExecuteInProcess = inProcessExec
                 CreateDurableExecutor = durableExecFactory
                 ActivityInfo = None  // Delay is not an activity
@@ -282,6 +289,7 @@ module PackedTypedStep =
                 DurableId = $"WithRetry_{innerPacked.DurableId}"
                 Name = $"Retry({maxRetries})"
                 Kind = Resilience (Retry maxRetries)
+                OutputType = typeof<'o>
                 ExecuteInProcess = inProcessExec
                 CreateDurableExecutor = durableExecFactory
                 ActivityInfo = innerPacked.ActivityInfo  // Inner step's activity
@@ -310,6 +318,7 @@ module PackedTypedStep =
                 DurableId = $"WithTimeout_{innerPacked.DurableId}"
                 Name = $"Timeout({timeout})"
                 Kind = Resilience (Timeout timeout)
+                OutputType = typeof<'o>
                 ExecuteInProcess = inProcessExec
                 CreateDurableExecutor = durableExecFactory
                 ActivityInfo = innerPacked.ActivityInfo  // Inner step's activity
@@ -339,6 +348,7 @@ module PackedTypedStep =
                 DurableId = $"WithFallback_{innerPacked.DurableId}"
                 Name = $"Fallback({fallbackId})"
                 Kind = Resilience (Fallback fallbackId)
+                OutputType = typeof<'o>
                 ExecuteInProcess = inProcessExec
                 CreateDurableExecutor = durableExecFactory
                 ActivityInfo = innerPacked.ActivityInfo  // Inner step's activity
@@ -375,6 +385,7 @@ module PackedTypedStep =
                 DurableId = durableId
                 Name = name
                 Kind = Regular
+                OutputType = typeof<'o>
                 ExecuteInProcess = inProcessExec
                 CreateDurableExecutor = durableExecFactory
                 ActivityInfo = Some (durableId, fun input ->
@@ -747,6 +758,7 @@ type WorkflowBuilder() =
                 DurableId = $"WithRetry_{innerPacked.DurableId}"
                 Name = $"Retry({maxRetries})"
                 Kind = Resilience (Retry maxRetries)
+                OutputType = innerPacked.OutputType
                 ExecuteInProcess = fun input ctx ->
                     let rec retry attempt =
                         task {
@@ -780,6 +792,7 @@ type WorkflowBuilder() =
                 DurableId = $"WithTimeout_{innerPacked.DurableId}"
                 Name = $"Timeout({duration})"
                 Kind = Resilience (Timeout duration)
+                OutputType = innerPacked.OutputType
                 ExecuteInProcess = fun input ctx ->
                     task {
                         let execution = innerPacked.ExecuteInProcess input ctx
@@ -821,6 +834,7 @@ type WorkflowBuilder() =
                 DurableId = $"WithFallback_{innerPacked.DurableId}"
                 Name = $"Fallback({durableId})"
                 Kind = Resilience (Fallback durableId)
+                OutputType = innerPacked.OutputType
                 ExecuteInProcess = fun input ctx ->
                     task {
                         try
@@ -887,7 +901,7 @@ module Workflow =
             let fn = Func<obj, Task<obj>>(fun input ->
                 let ctx = WorkflowContext.create()
                 packed.ExecuteInProcess input ctx)
-            Interop.ExecutorFactory.CreateStep(executorId, fn)
+            Interop.ExecutorFactory.CreateStep(executorId, fn, packed.OutputType)
 
     /// Compiles a workflow definition to MAF Workflow using WorkflowBuilder.
     /// Returns a Workflow that can be executed with InProcessExecution.RunAsync.
@@ -962,21 +976,22 @@ module Workflow =
                 // Compile to MAF workflow
                 let mafWorkflow = toMAF workflow
 
-                // Run via InProcessExecution
-                let! run = MAFInProcessExecution.RunAsync(mafWorkflow, input :> obj)
-                use _ = run
+                // Run via Lockstep InProcessExecution (runs all SuperSteps synchronously)
+                let! run = MAFInProcessExecution.Lockstep.RunAsync(mafWorkflow, input :> obj, null, System.Threading.CancellationToken.None)
 
-                // Find the last ExecutorCompletedEvent - it should be the workflow output
+                // Find the WorkflowOutputEvent - the definitive workflow output
                 let mutable lastResult: obj option = None
                 for evt in run.NewEvents do
                     match evt with
-                    | :? MAFExecutorCompletedEvent as completed ->
-                        lastResult <- Some completed.Data
+                    | :? MAFWorkflowOutputEvent as output ->
+                        lastResult <- Some output.Data
                     | _ -> ()
+
+                do! run.DisposeAsync()
 
                 match lastResult with
                 | Some data -> return convertToOutput<'output> data
-                | None -> return failwith "Workflow did not produce output. No ExecutorCompletedEvent found."
+                | None -> return failwith "Workflow did not produce output. No WorkflowOutputEvent found."
             }
 
         // AGENTS: DO NOT CHANGE THIS FUNCTION UNLESS EXPLICIT INSTRUCTIONS ARE GIVEN TO DO SO.
@@ -985,21 +1000,22 @@ module Workflow =
         let tryRun<'input, 'output, 'error> (input: 'input) (workflow: WorkflowDef<'input, 'output, 'error>) : Task<Result<'output, 'error>> =
             task {
                 let mafWorkflow = toMAF workflow
-                let! run = MAFInProcessExecution.RunAsync(mafWorkflow, input :> obj)
-                use _ = run
-                
+                let! run = MAFInProcessExecution.Lockstep.RunAsync(mafWorkflow, input :> obj, null, System.Threading.CancellationToken.None)
+
                 let mutable completed = None
                 let mutable earlyExit = None
 
                 for evt in run.NewEvents do
                     match evt with
-                    | :? MAFExecutorCompletedEvent as ok ->
-                        completed <- Some ok.Data
+                    | :? MAFWorkflowOutputEvent as output ->
+                        completed <- Some output.Data
 
                     | :? ExecutorEarlyExitEvent as early ->
                         earlyExit <- Some early.Error
 
                     | _ -> ()
+
+                do! run.DisposeAsync()
 
                 match completed, earlyExit with
                 | _, Some error ->
