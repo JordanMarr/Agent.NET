@@ -37,7 +37,7 @@
   </Target>
 
   <ItemGroup>
-    <PackageReference Include="Microsoft.DurableTask.Abstractions" Version="1.19.1" />
+    <PackageReference Include="Microsoft.DurableTask.Abstractions" Version="1.20.1" />
     <PackageReference Include="Microsoft.Agents.AI.Workflows" Version="1.0.0-rc1" />
   </ItemGroup>
 
