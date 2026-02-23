@@ -8,14 +8,14 @@
 
   <!-- NuGet Package Metadata -->
   <PropertyGroup>
-    <PackageId>AgentNet.Unofficial</PackageId>
+    <PackageId>AgentNet</PackageId>
     <Version>1.0.0-alpha.4</Version>
-    <Authors>Jordan Marr;Onur Gumus</Authors>
-    <Description>Unofficial fork of AgentNet updated for Microsoft.Agents.AI 260212.1. An F# library for building AI agents on .NET, wrapping Microsoft Agent Framework with idiomatic F# APIs.</Description>
+    <Authors>Jordan Marr</Authors>
+    <Description>A beautiful F# library for building AI agents on .NET. Wraps Microsoft Agent Framework with idiomatic F# APIs using quotation-based tools, pipeline-style agents, and computation expression workflows.</Description>
     <PackageTags>fsharp;ai;agents;llm;microsoft-agent-framework;workflows</PackageTags>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
-    <PackageProjectUrl>https://github.com/OnurGumus/Agent.NET</PackageProjectUrl>
-    <RepositoryUrl>https://github.com/OnurGumus/Agent.NET</RepositoryUrl>
+    <PackageProjectUrl>https://github.com/JordanMarr/Agent.NET</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/JordanMarr/Agent.NET</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
     <PackageReadmeFile>README.md</PackageReadmeFile>
   </PropertyGroup>
@@ -40,8 +40,8 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="Microsoft.Agents.AI" Version="1.0.0-preview.260212.1" />
-    <PackageReference Include="Microsoft.Agents.AI.Workflows" Version="1.0.0-preview.260212.1" />
+    <PackageReference Include="Microsoft.Agents.AI" Version="1.0.0-rc1" />
+    <PackageReference Include="Microsoft.Agents.AI.Workflows" Version="1.0.0-rc1" />
     <PackageReference Include="Microsoft.Extensions.AI.Abstractions" Version="10.3.0" />
   </ItemGroup>
 

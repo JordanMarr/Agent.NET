@@ -119,13 +119,20 @@ public sealed class DurableStepExecutor(
 /// Custom executor that wraps an async step function.
 /// Uses AddCatchAll to handle any input type.
 /// </summary>
-public class StepExecutor(string name, Func<object, Task<object>> execute) : Executor(name)
+public class StepExecutor(string name, Func<object, Task<object>> execute, Type? outputType = null) : Executor(name)
 {
     /// <inheritdoc/>
-    protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder)
+    protected override ProtocolBuilder ConfigureProtocol(ProtocolBuilder protocolBuilder)
     {
         // Use AddCatchAll to catch any input type
-        return routeBuilder.AddCatchAll(HandleInputAsync);
+        protocolBuilder.RouteBuilder.AddCatchAll(HandleInputAsync);
+        // Declare the output types for rc1+ protocol validation
+        if (outputType is not null)
+        {
+            protocolBuilder.SendsMessageType(outputType);
+            protocolBuilder.YieldsOutputType(outputType);
+        }
+        return protocolBuilder;
     }
 
     private async ValueTask<object?> HandleInputAsync(PortableValue input, IWorkflowContext context, CancellationToken ct)
@@ -154,13 +161,20 @@ public class StepExecutor(string name, Func<object, Task<object>> execute) : Exe
 /// <summary>
 /// Custom executor that runs multiple branches in parallel.
 /// </summary>
-public class ParallelExecutor(string name, IReadOnlyList<Func<object, Task<object>>> branches) : Executor(name)
+public class ParallelExecutor(string name, IReadOnlyList<Func<object, Task<object>>> branches, Type? outputType = null) : Executor(name)
 {
     /// <inheritdoc/>
-    protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder)
+    protected override ProtocolBuilder ConfigureProtocol(ProtocolBuilder protocolBuilder)
     {
         // Use AddCatchAll to catch any input type
-        return routeBuilder.AddCatchAll(HandleInputAsync);
+        protocolBuilder.RouteBuilder.AddCatchAll(HandleInputAsync);
+        // Declare the output types for rc1+ protocol validation
+        if (outputType is not null)
+        {
+            protocolBuilder.SendsMessageType(outputType);
+            protocolBuilder.YieldsOutputType(outputType);
+        }
+        return protocolBuilder;
     }
 
     private async ValueTask<object?> HandleInputAsync(PortableValue input, IWorkflowContext context, CancellationToken ct)
@@ -194,9 +208,10 @@ public static class ExecutorFactory
     /// </summary>
     public static Executor CreateStep(
         string name,
-        Func<object, Task<object>> execute)
+        Func<object, Task<object>> execute,
+        Type? outputType = null)
     {
-        return new StepExecutor(name, execute);
+        return new StepExecutor(name, execute, outputType);
     }
 
     /// <summary>
