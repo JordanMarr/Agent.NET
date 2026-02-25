@@ -1,5 +1,15 @@
 {
   "version": "2.0",
+
+  "extensions": {
+    "durableTask": {
+      "hubName": "TestHubName",
+      "storageProvider": {
+        "connectionStringName": "AzureWebJobsStorage"
+      }
+    }
+  },
+
   "logging": {
     "applicationInsights": {
       "samplingSettings": {

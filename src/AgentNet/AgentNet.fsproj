@@ -9,7 +9,7 @@
   <!-- NuGet Package Metadata -->
   <PropertyGroup>
     <PackageId>AgentNet</PackageId>
-    <Version>1.0.0-alpha.4</Version>
+    <Version>1.0.0-rc.1</Version>
     <Authors>Jordan Marr</Authors>
     <Description>A beautiful F# library for building AI agents on .NET. Wraps Microsoft Agent Framework with idiomatic F# APIs using quotation-based tools, pipeline-style agents, and computation expression workflows.</Description>
     <PackageTags>fsharp;ai;agents;llm;microsoft-agent-framework;workflows</PackageTags>
@@ -40,8 +40,8 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="Microsoft.Agents.AI" Version="1.0.0-rc1" />
-    <PackageReference Include="Microsoft.Agents.AI.Workflows" Version="1.0.0-rc1" />
+    <PackageReference Include="Microsoft.Agents.AI" Version="1.0.0-rc2" />
+    <PackageReference Include="Microsoft.Agents.AI.Workflows" Version="1.0.0-rc2" />
     <PackageReference Include="Microsoft.Extensions.AI.Abstractions" Version="10.3.0" />
   </ItemGroup>
 
