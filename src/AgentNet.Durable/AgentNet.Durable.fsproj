@@ -9,7 +9,7 @@
   <!-- NuGet Package Metadata -->
   <PropertyGroup>
     <PackageId>AgentNet.Durable</PackageId>
-    <Version>1.0.0-alpha.4</Version>
+    <Version>1.0.0-rc.1</Version>
     <Authors>Jordan Marr</Authors>
     <Description>Durable workflow compilation for AgentNet. Compiles F# workflow definitions to Microsoft Azure Durable Functions (MAF) format for production deployment.</Description>
     <PackageTags>fsharp;ai;agents;durable;azure-functions;workflows;maf</PackageTags>
