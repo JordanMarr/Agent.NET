@@ -59,7 +59,7 @@ public static class AgentChatSample
     {
         Console.WriteLine("\nAgent Chat Mode - Type 'back' to return to menu\n");
 
-        var thread = agent.GetNewThread();
+        var thread = await agent.CreateSessionAsync();
 
         while (true)
         {

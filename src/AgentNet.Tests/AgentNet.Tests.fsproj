@@ -25,6 +25,7 @@
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
     <PackageReference Include="NUnit" Version="4.4.0" />
     <PackageReference Include="NUnit3TestAdapter" Version="4.6.0" />
+    <PackageReference Include="Polly.Core" Version="8.5.2" />
     <PackageReference Include="Unquote" Version="7.0.1" />
   </ItemGroup>
 

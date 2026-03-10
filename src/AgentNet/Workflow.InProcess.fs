@@ -24,6 +24,7 @@ type TypedWorkflowStep<'input, 'output> =
     | WithRetry of inner: TypedWorkflowStep<'input, 'output> * maxRetries: int
     | WithTimeout of inner: TypedWorkflowStep<'input, 'output> * timeout: TimeSpan
     | WithFallback of inner: TypedWorkflowStep<'input, 'output> * fallbackId: string * fallback: TypedWorkflowStep<'input, 'output>
+    | WithPolicy of inner: TypedWorkflowStep<'input, 'output> * pipeline: Polly.ResiliencePipeline
     /// Step that returns Result<'output, obj> and may early-exit the workflow.
     /// On Ok value, produces 'output. On Error, throws EarlyExitException with boxed error.
     | TryStep of durableId: string * name: string * execute: ('input -> WorkflowContext -> Task<Result<'output, obj>>)
@@ -39,6 +40,7 @@ and ResilienceKind =
     | Retry of maxRetries: int
     | Timeout of timeout: TimeSpan
     | Fallback of fallbackId: string
+    | Policy
 
 /// Wrapper that captures typed execution functions for heterogeneous storage.
 /// The packed step holds closures that capture the concrete type parameters,
@@ -354,6 +356,28 @@ module PackedTypedStep =
                 ActivityInfo = innerPacked.ActivityInfo  // Inner step's activity
                 InnerStep = Some innerPacked
                 FallbackStep = Some fallbackPacked
+            }
+
+        | TypedWorkflowStep.WithPolicy (inner, pipeline) ->
+            let innerPacked = pack inner
+            let runWithPolicy (input: obj) (ctx: WorkflowContext) : Task<obj> =
+                let callback = fun (ct: System.Threading.CancellationToken) ->
+                    ValueTask<obj>(innerPacked.ExecuteInProcess input ctx)
+                pipeline.ExecuteAsync(callback, System.Threading.CancellationToken.None).AsTask()
+            {
+                DurableId = $"WithPolicy_{innerPacked.DurableId}"
+                Name = "Policy"
+                Kind = Resilience Policy
+                OutputType = typeof<'o>
+                ExecuteInProcess = fun input ctx -> runWithPolicy input ctx
+                CreateDurableExecutor = fun stepIndex ->
+                    let innerFunc = Func<obj, Task<obj>>(fun input ->
+                        let ctx = WorkflowContext.create()
+                        runWithPolicy input ctx)
+                    Interop.ExecutorFactory.CreateStepExecutor($"Policy_{stepIndex}", stepIndex, innerFunc)
+                ActivityInfo = innerPacked.ActivityInfo
+                InnerStep = Some innerPacked
+                FallbackStep = None
             }
 
         | TypedWorkflowStep.TryStep (durableId, name, execute) ->
@@ -808,6 +832,35 @@ type WorkflowBuilder() =
                         let ctx = WorkflowContext.create()
                         innerPacked.ExecuteInProcess input ctx)
                     Interop.ExecutorFactory.CreateTimeoutExecutor($"Timeout_{stepIndex}", duration, stepIndex, innerFunc)
+                ActivityInfo = innerPacked.ActivityInfo
+                InnerStep = Some innerPacked
+                FallbackStep = None
+            }
+            { Name = state.Name; PackedSteps = allButLast @ [wrappedPacked] }
+
+    /// Wraps the previous step with a Polly resilience pipeline (circuit breaker, hedging, rate limiting, etc.)
+    [<CustomOperation("policy")>]
+    member _.Policy(state: WorkflowState<'input, 'output, 'error>, pipeline: Polly.ResiliencePipeline) : WorkflowState<'input, 'output, 'error> =
+        match state.PackedSteps with
+        | [] -> failwith "policy requires a preceding step"
+        | packedSteps ->
+            let allButLast = packedSteps |> List.take (packedSteps.Length - 1)
+            let innerPacked = packedSteps |> List.last
+            let runWithPolicy (input: obj) (ctx: WorkflowContext) : Task<obj> =
+                let callback = fun (ct: System.Threading.CancellationToken) ->
+                    ValueTask<obj>(innerPacked.ExecuteInProcess input ctx)
+                pipeline.ExecuteAsync(callback, System.Threading.CancellationToken.None).AsTask()
+            let wrappedPacked = {
+                DurableId = $"WithPolicy_{innerPacked.DurableId}"
+                Name = "Policy"
+                Kind = Resilience Policy
+                OutputType = innerPacked.OutputType
+                ExecuteInProcess = fun input ctx -> runWithPolicy input ctx
+                CreateDurableExecutor = fun stepIndex ->
+                    let innerFunc = Func<obj, Task<obj>>(fun input ->
+                        let ctx = WorkflowContext.create()
+                        runWithPolicy input ctx)
+                    Interop.ExecutorFactory.CreateStepExecutor($"Policy_{stepIndex}", stepIndex, innerFunc)
                 ActivityInfo = innerPacked.ActivityInfo
                 InnerStep = Some innerPacked
                 FallbackStep = None

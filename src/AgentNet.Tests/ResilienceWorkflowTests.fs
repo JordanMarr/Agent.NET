@@ -1,9 +1,10 @@
-/// Tests for resilience operations (retry, timeout, fallback)
+/// Tests for resilience operations (retry, timeout, fallback, policy)
 module AgentNet.Tests.ResilienceWorkflowTests
 
 open System
 open NUnit.Framework
 open Swensen.Unquote
+open Polly
 open AgentNet
 
 [<Test>]
@@ -189,3 +190,73 @@ let ``Timeout on parallel fanOut step``() =
 
     // Assert
     result =! 23  // (10+1) + (10+2) = 23
+
+[<Test>]
+let ``Policy retries via Polly pipeline``() =
+    // Arrange: A step that fails twice then succeeds, with a Polly retry policy
+    let mutable attempts = 0
+    let unreliableStep (x: int) =
+        attempts <- attempts + 1
+        if attempts < 3 then
+            failwith "Transient error"
+        else
+            x * 2 |> Task.fromResult
+
+    let retryPipeline =
+        ResiliencePipelineBuilder()
+            .AddRetry(Retry.RetryStrategyOptions(MaxRetryAttempts = 3))
+            .Build()
+
+    let resilientWorkflow = workflow {
+        step unreliableStep
+        policy retryPipeline
+    }
+
+    // Act
+    let result = (resilientWorkflow |> Workflow.InProcess.run 5).GetAwaiter().GetResult()
+
+    // Assert
+    result =! 10
+    attempts =! 3
+
+[<Test>]
+let ``Policy fails when Polly retries exhausted``() =
+    // Arrange: A step that always fails
+    let alwaysFails (x: int) =
+        failwith "Permanent error"
+        x |> Task.fromResult
+
+    let retryPipeline =
+        ResiliencePipelineBuilder()
+            .AddRetry(Retry.RetryStrategyOptions(MaxRetryAttempts = 2, Delay = TimeSpan.Zero))
+            .Build()
+
+    let resilientWorkflow = workflow {
+        step alwaysFails
+        policy retryPipeline
+    }
+
+    // Act & Assert
+    Assert.Catch(fun () ->
+        (resilientWorkflow |> Workflow.InProcess.run 5).GetAwaiter().GetResult() |> ignore) |> ignore
+
+[<Test>]
+let ``Policy passes through on success``() =
+    // Arrange: A step that always succeeds — policy should be a no-op
+    let successStep (x: int) = x * 3 |> Task.fromResult
+
+    let retryPipeline =
+        ResiliencePipelineBuilder()
+            .AddRetry(Retry.RetryStrategyOptions(MaxRetryAttempts = 2))
+            .Build()
+
+    let resilientWorkflow = workflow {
+        step successStep
+        policy retryPipeline
+    }
+
+    // Act
+    let result = (resilientWorkflow |> Workflow.InProcess.run 7).GetAwaiter().GetResult()
+
+    // Assert
+    result =! 21
