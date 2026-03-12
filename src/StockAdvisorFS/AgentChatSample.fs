@@ -59,8 +59,25 @@ let private chatLoop (agent: ChatAgent) = task {
             return ()
         else
             printf "\nStockAdvisor: "
-            let! response = agent.Chat(input)
-            printfn "%s\n" response
+            let stream = agent.ChatStream(input)
+            let enumerator = stream.GetAsyncEnumerator()
+            try
+                let mutable hasMore = true
+                while hasMore do
+                    let! next = enumerator.MoveNextAsync()
+                    if next then
+                        match enumerator.Current with
+                        | TextDelta t -> printf "%s" t
+                        | ReasoningDelta _ -> ()
+                        | ToolCallDelta u ->
+                            if u.IsStart then
+                                let name = u.Name |> Option.defaultValue "tool"
+                                printfn $"\n[calling {name}...]"
+                        | Completed _ -> printfn "\n"
+                    else
+                        hasMore <- false
+            finally
+                enumerator.DisposeAsync().AsTask().Wait()
             return! loop ()
     }
 
