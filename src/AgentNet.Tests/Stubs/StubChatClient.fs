@@ -12,6 +12,7 @@ type StubChatClient() =
     let mutable responses = Map.empty<string, string>
     let mutable defaultResponse = "Default response"
     let mutable callHistory = ResizeArray<string>()
+    let mutable streamingUpdates : ChatResponseUpdate list = []
 
     /// Sets a response for a specific input pattern.
     /// The pattern is matched against the last user message content.
@@ -22,6 +23,10 @@ type StubChatClient() =
     member this.SetDefaultResponse(response: string) =
         defaultResponse <- response
 
+    /// Sets the streaming updates to return from GetStreamingResponseAsync.
+    member this.SetStreamingUpdates(updates: ChatResponseUpdate list) =
+        streamingUpdates <- updates
+
     /// Gets the history of all messages sent to this client.
     member this.CallHistory = callHistory |> Seq.toList
 
@@ -29,6 +34,7 @@ type StubChatClient() =
     member this.Reset() =
         responses <- Map.empty
         callHistory.Clear()
+        streamingUpdates <- []
 
     interface IChatClient with
         member this.GetResponseAsync(chatMessages: IEnumerable<ChatMessage>, options: ChatOptions, cancellationToken: CancellationToken) =
@@ -58,8 +64,7 @@ type StubChatClient() =
             }
 
         member this.GetStreamingResponseAsync(chatMessages: IEnumerable<ChatMessage>, options: ChatOptions, cancellationToken: CancellationToken) =
-            // For testing, we don't need streaming - just return empty
-            AsyncSeq.empty<ChatResponseUpdate>()
+            AsyncSeq.ofList<ChatResponseUpdate> streamingUpdates
 
         member this.GetService(serviceType: Type, serviceKey: obj) : obj =
             null
@@ -74,6 +79,20 @@ and AsyncSeq =
                 { new IAsyncEnumerator<'T> with
                     member _.Current = Unchecked.defaultof<'T>
                     member _.MoveNextAsync() = ValueTask<bool>(false)
+                    member _.DisposeAsync() = ValueTask()
+                }
+        }
+
+    static member ofList<'T>(items: 'T list) : IAsyncEnumerable<'T> =
+        { new IAsyncEnumerable<'T> with
+            member _.GetAsyncEnumerator(_) =
+                let mutable index = -1
+                let arr = items |> List.toArray
+                { new IAsyncEnumerator<'T> with
+                    member _.Current = arr.[index]
+                    member _.MoveNextAsync() =
+                        index <- index + 1
+                        ValueTask<bool>(index < arr.Length)
                     member _.DisposeAsync() = ValueTask()
                 }
         }

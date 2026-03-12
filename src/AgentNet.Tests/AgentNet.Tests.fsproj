@@ -18,6 +18,7 @@
     <Compile Include="ResilienceWorkflowTests.fs" />
     <Compile Include="DurableWorkflowTests.fs" />
     <Compile Include="CompositionWorkflowTests.fs" />
+    <Compile Include="StreamingTests.fs" />
   </ItemGroup>
 
   <ItemGroup>

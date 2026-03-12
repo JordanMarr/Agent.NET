@@ -1,5 +1,6 @@
 namespace AgentNet
 
+open System.Collections.Generic
 open System.Threading.Tasks
 
 /// Configuration for a chat agent
@@ -28,11 +29,32 @@ type ChatResponse = {
     Messages: ChatMessage list
 }
 
-/// Represents an AI agent that can chat and use tools
+/// Rich representation of a tool call streaming update
+type ToolCallUpdate =
+    { Id: string
+      Name: string option
+      ArgumentsJsonDelta: string option
+      IsStart: bool
+      IsEnd: bool }
+
+/// Streaming events emitted by a chat agent
+type ChatStreamEvent =
+    | TextDelta of string
+    | ToolCallDelta of ToolCallUpdate
+    | ReasoningDelta of string
+    | Completed of ChatResponse
+
+/// Represents an AI agent that can chat and use tools.
 type ChatAgent = {
+    /// The configuration used to construct this agent (instructions, tools, etc.)
     Config: ChatAgentConfig
+    /// Sends a message to the agent and returns only the assistant's final text.
     Chat: string -> Task<string>
+    /// Sends a message to the agent and returns the full structured response.
     ChatFull: string -> Task<ChatResponse>
+    /// Streams incremental updates from the agent, including text deltas, 
+    /// reasoning deltas, tool-call updates, and a final completion event.
+    ChatStream: string -> IAsyncEnumerable<ChatStreamEvent>
 }
 
 /// Pipeline functions for creating chat agents
