@@ -20,6 +20,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <Compile Include="WorkflowBuilderExtensions.fs" />
     <Compile Include="Workflow.InProcess.fs" />
   </ItemGroup>
 
