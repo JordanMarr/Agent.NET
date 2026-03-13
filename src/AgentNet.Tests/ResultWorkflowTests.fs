@@ -5,6 +5,7 @@ open System.Threading.Tasks
 open NUnit.Framework
 open Swensen.Unquote
 open AgentNet
+open AgentNet.InProcess
 
 // Domain types for result workflow tests
 type Document = { Id: string; Content: string }

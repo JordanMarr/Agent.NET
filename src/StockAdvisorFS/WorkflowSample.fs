@@ -3,6 +3,7 @@ module StockAdvisorFS.WorkflowSample
 open System
 open System.Threading.Tasks
 open AgentNet
+open AgentNet.InProcess
 open Anthropic
 open Microsoft.Extensions.AI
 

@@ -5,6 +5,7 @@ module AgentNet.Tests.RoutingWorkflowTests
 open NUnit.Framework
 open Swensen.Unquote
 open AgentNet
+open AgentNet.InProcess
 
 // Domain types for routing tests
 type AnalysisResult =

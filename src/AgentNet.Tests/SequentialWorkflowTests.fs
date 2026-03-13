@@ -5,6 +5,7 @@ module AgentNet.Tests.SequentialWorkflowTests
 open NUnit.Framework
 open Swensen.Unquote
 open AgentNet
+open AgentNet.InProcess
 open AgentNet.Tests.Stubs
 
 // Domain types for sequential workflow tests

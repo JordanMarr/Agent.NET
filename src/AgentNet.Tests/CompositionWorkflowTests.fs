@@ -5,6 +5,7 @@ module AgentNet.Tests.CompositionWorkflowTests
 open NUnit.Framework
 open Swensen.Unquote
 open AgentNet
+open AgentNet.InProcess
 
 // Domain types for composition tests
 type Research = { Topic: string; Findings: string list }

@@ -110,15 +110,6 @@ module ResultExecutor =
             }
         }
 
-    /// Creates a result executor from a regular workflow (wraps output in Ok)
-    let fromWorkflow<'input, 'output, 'wfError, 'error> (name: string) (workflow: WorkflowDef<'input, 'output, 'wfError>) : ResultExecutor<'input, 'output, 'error> =
-        {
-            Name = name
-            Execute = fun input _ -> task {
-                let! result = Workflow.InProcess.run input workflow
-                return Ok result
-            }
-        }
 
 
 // =============================================================================

@@ -5,6 +5,7 @@ module AgentNet.Tests.ParallelWorkflowTests
 open NUnit.Framework
 open Swensen.Unquote
 open AgentNet
+open AgentNet.InProcess
 
 // Domain types for parallel tests
 type StockData = { Symbol: string; Price: float }

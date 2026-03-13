@@ -16,6 +16,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\AgentNet\AgentNet.fsproj" />
+    <ProjectReference Include="..\AgentNet.InProcess\AgentNet.InProcess.fsproj" />
   </ItemGroup>
 
   <ItemGroup>

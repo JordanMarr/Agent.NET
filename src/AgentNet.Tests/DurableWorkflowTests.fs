@@ -5,6 +5,7 @@ open System
 open NUnit.Framework
 open Swensen.Unquote
 open AgentNet
+open AgentNet.InProcess
 open AgentNet.Durable
 
 // Domain types for durable workflow tests

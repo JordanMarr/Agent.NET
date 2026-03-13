@@ -1,0 +1,50 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Library</OutputType>
+    <TargetFrameworks>net8.0;net9.0;net10.0</TargetFrameworks>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+  </PropertyGroup>
+
+  <!-- NuGet Package Metadata -->
+  <PropertyGroup>
+    <PackageId>AgentNet.InProcess</PackageId>
+    <Version>1.0.0-rc.3</Version>
+    <Authors>Jordan Marr</Authors>
+    <Description>In-process workflow execution for AgentNet. Compiles F# workflow definitions to Microsoft Agent Framework (MAF) format and executes them in-process.</Description>
+    <PackageTags>fsharp;ai;agents;llm;microsoft-agent-framework;workflows;in-process</PackageTags>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageProjectUrl>https://github.com/JordanMarr/Agent.NET</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/JordanMarr/Agent.NET</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="Workflow.InProcess.fs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="AgentNet.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\AgentNet\AgentNet.fsproj" />
+    <ProjectReference Include="..\AgentNet.Interop\AgentNet.Interop.csproj" PrivateAssets="All" />
+  </ItemGroup>
+
+  <!-- Include AgentNet.Interop in NuGet package -->
+  <Target Name="IncludeInteropInPackage" BeforeTargets="BuildOnlySettings">
+    <ItemGroup>
+      <BuildOutputInPackage Include="$(OutputPath)AgentNet.Interop.dll" />
+    </ItemGroup>
+  </Target>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Agents.AI.Workflows" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Update="FSharp.Core" Version="8.0.100" />
+  </ItemGroup>
+
+</Project>
