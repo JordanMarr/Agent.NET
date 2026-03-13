@@ -294,26 +294,28 @@ let ``Policy forwards CancellationToken to step via WorkflowContext``() =
 let ``Policy forwards CancellationToken through TypedAgent to ChatAgent``() =
     // Arrange: A ChatAgent whose Chat function observes the cancellation token
     let mutable tokenWasCancelled = false
-    let slowChatAgent : ChatAgent = {
-        Config = { Name = Some "SlowAgent"; Instructions = "test"; Tools = [] }
-        Chat = fun _message ct -> task {
-            try
-                do! System.Threading.Tasks.Task.Delay(5000, ct)
-                return "response"
-            with :? System.OperationCanceledException ->
-                tokenWasCancelled <- true
-                return raise (System.OperationCanceledException())
-        }
-        ChatFull = fun _message _ct -> task {
-            return { Text = "response"; Messages = [] }
-        }
-        ChatStream = fun _message -> Unchecked.defaultof<_>
+    
+    let config = { Name = Some "TestAgent"; Instructions = "test"; Tools = [] }
+
+    let chatFn msg ct = task {
+        try
+            do! System.Threading.Tasks.Task.Delay(5000, ct)
+            return "response"
+        with :? System.OperationCanceledException ->
+            tokenWasCancelled <- true
+            return raise (System.OperationCanceledException())
     }
 
-    let typedAgent = TypedAgent.create
-                        (fun (x: int) -> $"process {x}")
-                        (fun _ response -> response)
-                        slowChatAgent
+    let chatFullFn msg ct = { Text = "response"; Messages = [] } |> Task.fromResult
+    let chatStreamFn msg = Unchecked.defaultof<_>
+    
+    let slowChatAgent = ChatAgent(config, chatFn, chatFullFn, chatStreamFn)
+
+    let typedAgent = 
+        TypedAgent.create
+            (fun (x: int) -> $"process {x}")
+            (fun _ response -> response)
+            slowChatAgent
 
     let timeoutPipeline =
         ResiliencePipelineBuilder()

@@ -44,18 +44,29 @@ type ChatStreamEvent =
     | ReasoningDelta of string
     | Completed of ChatResponse
 
+
 /// Represents an AI agent that can chat and use tools.
-type ChatAgent = {
+type ChatAgent(config, chat, chatFull, chatStream) = 
+
     /// The configuration used to construct this agent (instructions, tools, etc.)
-    Config: ChatAgentConfig
+    member this.Config : ChatAgentConfig = 
+        config
+
     /// Sends a message to the agent and returns only the assistant's final text.
-    Chat: string -> System.Threading.CancellationToken -> Task<string>
+    member this.Chat(msg: string, ?ct: System.Threading.CancellationToken) : Task<string> = 
+        let ct = defaultArg ct System.Threading.CancellationToken.None
+        chat msg ct
+
     /// Sends a message to the agent and returns the full structured response.
-    ChatFull: string -> System.Threading.CancellationToken -> Task<ChatResponse>
+    member this.ChatFull(msg: string, ?ct: System.Threading.CancellationToken) : Task<ChatResponse> = 
+        let ct = defaultArg ct System.Threading.CancellationToken.None
+        chatFull msg ct
+
     /// Streams incremental updates from the agent, including text deltas, 
     /// reasoning deltas, tool-call updates, and a final completion event.
-    ChatStream: string -> IAsyncEnumerable<ChatStreamEvent>
-}
+    member this.ChatStream(msg: string) : IAsyncEnumerable<ChatStreamEvent> = 
+        chatStream msg
+
 
 /// Pipeline functions for creating chat agents
 type ChatAgent with

@@ -74,91 +74,93 @@ module MAF =
     let build (chatClient: IChatClient) (config: ChatAgentConfig) : ChatAgent =
         let mafAgent = createAgent chatClient config
 
-        {
-            Config = config
-            Chat = fun message ct -> task {
-                let! session = mafAgent.CreateSessionAsync(ct)
-                let! response = mafAgent.RunAsync(message, session, null, ct)
-                return response.Text
-            }
-            ChatFull = fun message ct -> task {
-                let! session = mafAgent.CreateSessionAsync(ct)
-                let! response = mafAgent.RunAsync(message, session, null, ct)
-                // Return the user message and assistant response
-                let messages : AgentNet.ChatMessage list = [
-                    { Role = AgentNet.ChatRole.User; Content = message }
-                    { Role = AgentNet.ChatRole.Assistant; Content = response.Text }
-                ]
-                return { Text = response.Text; Messages = messages }
-            }
-            ChatStream = fun message ->
-                { new IAsyncEnumerable<ChatStreamEvent> with
-                    member _.GetAsyncEnumerator(ct) =
-                        let textAccumulator = StringBuilder()
-                        let seenToolCalls = HashSet<string>()
-                        let mutable session = Unchecked.defaultof<_>
-                        let mutable innerEnumerator : IAsyncEnumerator<AgentResponseUpdate> = null
-                        let mutable eventBuffer : ChatStreamEvent list = []
-                        let mutable completed = false
-                        let mutable current = Unchecked.defaultof<ChatStreamEvent>
-
-                        { new IAsyncEnumerator<ChatStreamEvent> with
-                            member _.Current = current
-                            member _.MoveNextAsync() =
-                                (task {
-                                    // Initialize on first call
-                                    if innerEnumerator = null then
-                                        let! s = mafAgent.CreateSessionAsync(ct)
-                                        session <- s
-                                        let stream = mafAgent.RunStreamingAsync(message, session, null, ct)
-                                        innerEnumerator <- stream.GetAsyncEnumerator(ct)
-
-                                    // Drain buffered events first
-                                    match eventBuffer with
-                                    | next :: rest ->
-                                        current <- next
-                                        eventBuffer <- rest
-                                        return true
-                                    | [] when completed ->
-                                        return false
-                                    | [] ->
-                                        // Pull from inner stream until we have events
-                                        let mutable hasEvents = false
-                                        while not hasEvents && not completed do
-                                            let! hasMore = innerEnumerator.MoveNextAsync()
-                                            if hasMore then
-                                                let events = mapUpdateToEvents seenToolCalls innerEnumerator.Current
-                                                // Accumulate text for the final Completed event
-                                                for evt in events do
-                                                    match evt with
-                                                    | TextDelta t -> textAccumulator.Append(t) |> ignore
-                                                    | _ -> ()
-                                                match events with
-                                                | first :: rest ->
-                                                    current <- first
-                                                    eventBuffer <- rest
-                                                    hasEvents <- true
-                                                | [] -> () // Empty update, keep pulling
-                                            else
-                                                // Stream ended — emit Completed
-                                                let fullText = textAccumulator.ToString()
-                                                let messages : AgentNet.ChatMessage list = [
-                                                    { Role = AgentNet.ChatRole.User; Content = message }
-                                                    { Role = AgentNet.ChatRole.Assistant; Content = fullText }
-                                                ]
-                                                current <- Completed { Text = fullText; Messages = messages }
-                                                completed <- true
-                                                hasEvents <- true
-                                        return hasEvents
-                                } |> ValueTask<bool>)
-                            member _.DisposeAsync() =
-                                if innerEnumerator <> null then
-                                    innerEnumerator.DisposeAsync()
-                                else
-                                    ValueTask()
-                        }
-                }
+        let chat (msg: string) ct = task {
+            let! session = mafAgent.CreateSessionAsync(ct)
+            let! response = mafAgent.RunAsync(msg, session, null, ct)
+            return response.Text
         }
+
+        let chatFull (msg: string) ct = task {
+            let! session = mafAgent.CreateSessionAsync(ct)
+            let! response = mafAgent.RunAsync(msg, session, null, ct)
+            let messages : AgentNet.ChatMessage list = [
+                { Role = AgentNet.ChatRole.User; Content = msg }
+                { Role = AgentNet.ChatRole.Assistant; Content = response.Text }
+            ]
+            return { Text = response.Text; Messages = messages }
+        }
+
+        let chatStream (message: string) =
+            { new IAsyncEnumerable<ChatStreamEvent> with
+                member _.GetAsyncEnumerator(ct) =
+                    let textAccumulator = StringBuilder()
+                    let seenToolCalls = HashSet<string>()
+                    let mutable session = Unchecked.defaultof<_>
+                    let mutable innerEnumerator : IAsyncEnumerator<AgentResponseUpdate> = null
+                    let mutable eventBuffer : ChatStreamEvent list = []
+                    let mutable completed = false
+                    let mutable current = Unchecked.defaultof<ChatStreamEvent>
+
+                    { new IAsyncEnumerator<ChatStreamEvent> with
+                        member _.Current = current
+                        member _.MoveNextAsync() =
+                            (task {
+                                // Initialize on first call
+                                if innerEnumerator = null then
+                                    let! s = mafAgent.CreateSessionAsync(ct)
+                                    session <- s
+                                    let stream = mafAgent.RunStreamingAsync(message, session, null, ct)
+                                    innerEnumerator <- stream.GetAsyncEnumerator(ct)
+
+                                // Drain buffered events first
+                                match eventBuffer with
+                                | next :: rest ->
+                                    current <- next
+                                    eventBuffer <- rest
+                                    return true
+                                | [] when completed ->
+                                    return false
+                                | [] ->
+                                    // Pull from inner stream until we have events
+                                    let mutable hasEvents = false
+                                    while not hasEvents && not completed do
+                                        let! hasMore = innerEnumerator.MoveNextAsync()
+                                        if hasMore then
+                                            let events = mapUpdateToEvents seenToolCalls innerEnumerator.Current
+                                            // Accumulate text for the final Completed event
+                                            for evt in events do
+                                                match evt with
+                                                | TextDelta t -> textAccumulator.Append(t) |> ignore
+                                                | _ -> ()
+                                            match events with
+                                            | first :: rest ->
+                                                current <- first
+                                                eventBuffer <- rest
+                                                hasEvents <- true
+                                            | [] -> () // Empty update, keep pulling
+                                        else
+                                            // Stream ended — emit Completed
+                                            let fullText = textAccumulator.ToString()
+                                            let messages : AgentNet.ChatMessage list = [
+                                                { Role = AgentNet.ChatRole.User; Content = message }
+                                                { Role = AgentNet.ChatRole.Assistant; Content = fullText }
+                                            ]
+                                            current <- Completed { Text = fullText; Messages = messages }
+                                            completed <- true
+                                            hasEvents <- true
+                                    return hasEvents
+                            } |> ValueTask<bool>)
+                        member _.DisposeAsync() =
+                            if innerEnumerator <> null then
+                                innerEnumerator.DisposeAsync()
+                            else
+                                ValueTask()
+                    }
+            }
+
+        ChatAgent(config, chat, chatFull, chatStream)
+            
+        
 
 /// Extends ChatAgent type with the build function (requires MAF)
 [<AutoOpen>]

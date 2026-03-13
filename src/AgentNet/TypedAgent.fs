@@ -14,10 +14,9 @@ type TypedAgent<'input, 'output> =
     }
     /// Invokes the typed agent with structured input/output
     member this.Invoke (input: 'input, ?ct: System.Threading.CancellationToken) : Task<'output> =
-        let ct = defaultArg ct System.Threading.CancellationToken.None
         task {
             let prompt = this.FormatInput input
-            let! response = this.ChatAgent.Chat prompt ct
+            let! response = this.ChatAgent.Chat(prompt, ?ct = ct)
             return this.ParseOutput input response
         }
 
