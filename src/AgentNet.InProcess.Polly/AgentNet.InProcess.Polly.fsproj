@@ -1,0 +1,38 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Library</OutputType>
+    <TargetFrameworks>net8.0;net9.0;net10.0</TargetFrameworks>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+  </PropertyGroup>
+
+  <!-- NuGet Package Metadata -->
+  <PropertyGroup>
+    <PackageId>AgentNet.InProcess.Polly</PackageId>
+    <Version>1.0.0-rc.3</Version>
+    <Authors>Jordan Marr, Onur Gumus</Authors>
+    <Description>Polly resilience pipeline decorators for AgentNet in-process workflows. Wraps workflow steps with Polly ResiliencePipeline for retry, timeout, circuit-breaker and other resilience strategies.</Description>
+    <PackageTags>fsharp;ai;agents;llm;microsoft-agent-framework;workflows;polly;resilience</PackageTags>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageProjectUrl>https://github.com/JordanMarr/Agent.NET</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/JordanMarr/Agent.NET</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="PollyDecorators.fs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\AgentNet.InProcess\AgentNet.InProcess.fsproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Polly.Core" Version="8.6.6" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Update="FSharp.Core" Version="8.0.100" />
+  </ItemGroup>
+
+</Project>
