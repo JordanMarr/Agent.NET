@@ -104,8 +104,8 @@ module ResultExecutor =
     let fromChatAgent (name: string) (agent: ChatAgent) : ResultExecutor<string, string, 'error> =
         {
             Name = name
-            Execute = fun input _ -> task {
-                let! result = agent.Chat input
+            Execute = fun input ctx -> task {
+                let! result = agent.Chat input ctx.CancellationToken
                 return Ok result
             }
         }
@@ -238,8 +238,8 @@ module ResultWorkflowInternal =
         | AsyncResultStep fn ->
             { Name = name; Execute = fun input _ -> fn input |> Async.StartAsTask }
         | AgentResultStep agent ->
-            { Name = name; Execute = fun input _ -> task {
-                let! output = TypedAgent.invoke input agent
+            { Name = name; Execute = fun input ctx -> task {
+                let! output = TypedAgent.invokeWithCancellation ctx.CancellationToken input agent
                 return Ok output
             }}
         | ExecutorResultStep exec ->

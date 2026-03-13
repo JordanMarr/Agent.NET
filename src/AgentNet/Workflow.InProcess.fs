@@ -24,6 +24,7 @@ type TypedWorkflowStep<'input, 'output> =
     | WithRetry of inner: TypedWorkflowStep<'input, 'output> * maxRetries: int
     | WithTimeout of inner: TypedWorkflowStep<'input, 'output> * timeout: TimeSpan
     | WithFallback of inner: TypedWorkflowStep<'input, 'output> * fallbackId: string * fallback: TypedWorkflowStep<'input, 'output>
+    | WithPolicy of inner: TypedWorkflowStep<'input, 'output> * pipeline: Polly.ResiliencePipeline
     /// Step that returns Result<'output, obj> and may early-exit the workflow.
     /// On Ok value, produces 'output. On Error, throws EarlyExitException with boxed error.
     | TryStep of durableId: string * name: string * execute: ('input -> WorkflowContext -> Task<Result<'output, obj>>)
@@ -39,6 +40,7 @@ and ResilienceKind =
     | Retry of maxRetries: int
     | Timeout of timeout: TimeSpan
     | Fallback of fallbackId: string
+    | Policy
 
 /// Wrapper that captures typed execution functions for heterogeneous storage.
 /// The packed step holds closures that capture the concrete type parameters,
@@ -354,6 +356,29 @@ module PackedTypedStep =
                 ActivityInfo = innerPacked.ActivityInfo  // Inner step's activity
                 InnerStep = Some innerPacked
                 FallbackStep = Some fallbackPacked
+            }
+
+        | TypedWorkflowStep.WithPolicy (inner, pipeline) ->
+            let innerPacked = pack inner
+            let runWithPolicy (input: obj) (ctx: WorkflowContext) : Task<obj> =
+                let callback = fun (ct: System.Threading.CancellationToken) ->
+                    let ctxWithToken = ctx |> WorkflowContext.withCancellation ct
+                    ValueTask<obj>(innerPacked.ExecuteInProcess input ctxWithToken)
+                pipeline.ExecuteAsync(callback, ctx.CancellationToken).AsTask()
+            {
+                DurableId = $"WithPolicy_{innerPacked.DurableId}"
+                Name = "Policy"
+                Kind = Resilience Policy
+                OutputType = typeof<'o>
+                ExecuteInProcess = fun input ctx -> runWithPolicy input ctx
+                CreateDurableExecutor = fun stepIndex ->
+                    let innerFunc = Func<obj, Task<obj>>(fun input ->
+                        let ctx = WorkflowContext.create()
+                        runWithPolicy input ctx)
+                    Interop.ExecutorFactory.CreateStepExecutor($"Policy_{stepIndex}", stepIndex, innerFunc)
+                ActivityInfo = innerPacked.ActivityInfo
+                InnerStep = Some innerPacked
+                FallbackStep = None
             }
 
         | TypedWorkflowStep.TryStep (durableId, name, execute) ->
@@ -814,6 +839,36 @@ type WorkflowBuilder() =
             }
             { Name = state.Name; PackedSteps = allButLast @ [wrappedPacked] }
 
+    /// Wraps the previous step with a Polly resilience pipeline (circuit breaker, hedging, rate limiting, etc.)
+    [<CustomOperation("policy")>]
+    member _.Policy(state: WorkflowState<'input, 'output, 'error>, pipeline: Polly.ResiliencePipeline) : WorkflowState<'input, 'output, 'error> =
+        match state.PackedSteps with
+        | [] -> failwith "policy requires a preceding step"
+        | packedSteps ->
+            let allButLast = packedSteps |> List.take (packedSteps.Length - 1)
+            let innerPacked = packedSteps |> List.last
+            let runWithPolicy (input: obj) (ctx: WorkflowContext) : Task<obj> =
+                let callback = fun (ct: System.Threading.CancellationToken) ->
+                    let ctxWithToken = ctx |> WorkflowContext.withCancellation ct
+                    ValueTask<obj>(innerPacked.ExecuteInProcess input ctxWithToken)
+                pipeline.ExecuteAsync(callback, ctx.CancellationToken).AsTask()
+            let wrappedPacked = {
+                DurableId = $"WithPolicy_{innerPacked.DurableId}"
+                Name = "Policy"
+                Kind = Resilience Policy
+                OutputType = innerPacked.OutputType
+                ExecuteInProcess = fun input ctx -> runWithPolicy input ctx
+                CreateDurableExecutor = fun stepIndex ->
+                    let innerFunc = Func<obj, Task<obj>>(fun input ->
+                        let ctx = WorkflowContext.create()
+                        runWithPolicy input ctx)
+                    Interop.ExecutorFactory.CreateStepExecutor($"Policy_{stepIndex}", stepIndex, innerFunc)
+                ActivityInfo = innerPacked.ActivityInfo
+                InnerStep = Some innerPacked
+                FallbackStep = None
+            }
+            { Name = state.Name; PackedSteps = allButLast @ [wrappedPacked] }
+
     /// Wraps the previous step with a fallback. On failure, executes the fallback step instead.
     [<CustomOperation("fallback")>]
     member inline _.Fallback(state: WorkflowState<'input, 'output, 'error>, x: ^T) : WorkflowState<'input, 'output, 'error> =
@@ -903,6 +958,39 @@ module Workflow =
                 packed.ExecuteInProcess input ctx)
             Interop.ExecutorFactory.CreateStep(executorId, fn, packed.OutputType)
 
+    /// Like packedStepToMAFExecutor but creates the WorkflowContext with the given CancellationToken.
+    let private packedStepToMAFExecutorWithCT (ct: System.Threading.CancellationToken) (stepIndex: int) (packed: PackedTypedStep) : MAFExecutor =
+        match packed.Kind with
+        | DurableAwaitEvent eventName ->
+            failwith $"AwaitEvent '{eventName}' cannot be compiled for in-process execution. Use Workflow.Durable.run instead."
+        | DurableDelay duration ->
+            failwith $"Delay ({duration}) cannot be compiled for in-process execution. Use Workflow.Durable.run instead."
+        | Regular | Resilience _ ->
+            let executorId = $"{packed.DurableId}_{stepIndex}"
+            let fn = Func<obj, Task<obj>>(fun input ->
+                let ctx = WorkflowContext.create() |> WorkflowContext.withCancellation ct
+                packed.ExecuteInProcess input ctx)
+            Interop.ExecutorFactory.CreateStep(executorId, fn, packed.OutputType)
+
+    /// Like toMAF but seeds each step's WorkflowContext with the given CancellationToken.
+    let internal toMAFWithCancellation<'input, 'output, 'error> (ct: System.Threading.CancellationToken) (workflow: WorkflowDef<'input, 'output, 'error>) : MAFWorkflow =
+        let name = workflow.Name |> Option.defaultValue "Workflow"
+        let packedSteps = workflow.TypedSteps
+        match packedSteps with
+        | [] -> failwith "Workflow must have at least one step"
+        | steps ->
+            let executors = steps |> List.mapi (packedStepToMAFExecutorWithCT ct)
+            match executors with
+            | [] -> failwith "Workflow must have at least one step"
+            | firstExecutor :: restExecutors ->
+                let mutable builder = MAFWorkflowBuilder(firstExecutor).WithName(name)
+                let mutable prev = firstExecutor
+                for exec in restExecutors do
+                    builder <- builder.AddEdge(prev, exec)
+                    prev <- exec
+                builder <- builder.WithOutputFrom(prev)
+                builder.Build()
+
     /// Compiles a workflow definition to MAF Workflow using WorkflowBuilder.
     /// Returns a Workflow that can be executed with InProcessExecution.RunAsync.
     /// If no name is set, uses "Workflow" as the default name.
@@ -980,6 +1068,27 @@ module Workflow =
                 let! run = MAFInProcessExecution.Lockstep.RunAsync(mafWorkflow, input :> obj, null, System.Threading.CancellationToken.None)
 
                 // Find the WorkflowOutputEvent - the definitive workflow output
+                let mutable lastResult: obj option = None
+                for evt in run.NewEvents do
+                    match evt with
+                    | :? MAFWorkflowOutputEvent as output ->
+                        lastResult <- Some output.Data
+                    | _ -> ()
+
+                match lastResult with
+                | Some data -> return convertToOutput<'output> data
+                | None -> return failwith "Workflow did not produce output. No WorkflowOutputEvent found."
+            }
+
+        /// Runs a workflow with a CancellationToken that flows into every step's WorkflowContext.
+        /// Use this to enable cooperative cancellation from an external source (e.g., user-triggered, host shutdown).
+        /// Steps and Polly policies receive the token via ctx.CancellationToken.
+        let runWithCancellation<'input, 'output, 'error> (ct: System.Threading.CancellationToken) (input: 'input) (workflow: WorkflowDef<'input, 'output, 'error>) : Task<'output> =
+            task {
+                let mafWorkflow = toMAFWithCancellation ct workflow
+
+                let! run = MAFInProcessExecution.Lockstep.RunAsync(mafWorkflow, input :> obj, null, ct)
+
                 let mutable lastResult: obj option = None
                 for evt in run.NewEvents do
                     match evt with

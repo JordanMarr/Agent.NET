@@ -9,6 +9,8 @@ type WorkflowContext = {
     RunId: Guid
     /// Shared state dictionary for passing data between executors
     State: Map<string, obj>
+    /// Cancellation token for cooperative cancellation (e.g., from Polly timeout/hedging)
+    CancellationToken: System.Threading.CancellationToken
 }
 
 module WorkflowContext =
@@ -16,7 +18,12 @@ module WorkflowContext =
     let create () = {
         RunId = Guid.NewGuid()
         State = Map.empty
+        CancellationToken = System.Threading.CancellationToken.None
     }
+
+    /// Creates a workflow context with a specific cancellation token
+    let withCancellation (ct: System.Threading.CancellationToken) (ctx: WorkflowContext) =
+        { ctx with CancellationToken = ct }
 
     /// Gets a typed value from the context state
     let tryGet<'T> (key: string) (ctx: WorkflowContext) : 'T option =
@@ -74,5 +81,5 @@ module Executor =
     let fromTypedAgent (name: string) (agent: TypedAgent<'input, 'output>) : Executor<'input, 'output> =
         {
             Name = name
-            Execute = fun input _ -> TypedAgent.invoke input agent
+            Execute = fun input ctx -> TypedAgent.invokeWithCancellation ctx.CancellationToken input agent
         }

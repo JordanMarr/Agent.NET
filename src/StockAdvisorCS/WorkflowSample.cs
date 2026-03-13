@@ -69,7 +69,7 @@ internal sealed class CompareStocksExecutor(AIAgent agent) : Executor<StockPair,
             Volatility: {pair.Stock2.Volatility}
             """;
 
-        var thread = agent.GetNewThread();
+        var thread = await agent.CreateSessionAsync();
         var response = await agent.RunAsync(prompt, thread);
         return new AnalysisResult(pair, response.Text);
     }

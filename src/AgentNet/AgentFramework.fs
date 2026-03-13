@@ -76,14 +76,14 @@ module MAF =
 
         {
             Config = config
-            Chat = fun message -> task {
-                let! session = mafAgent.CreateSessionAsync(CancellationToken.None)
-                let! response = mafAgent.RunAsync(message, session, null, CancellationToken.None)
+            Chat = fun message ct -> task {
+                let! session = mafAgent.CreateSessionAsync(ct)
+                let! response = mafAgent.RunAsync(message, session, null, ct)
                 return response.Text
             }
-            ChatFull = fun message -> task {
-                let! session = mafAgent.CreateSessionAsync(CancellationToken.None)
-                let! response = mafAgent.RunAsync(message, session, null, CancellationToken.None)
+            ChatFull = fun message ct -> task {
+                let! session = mafAgent.CreateSessionAsync(ct)
+                let! response = mafAgent.RunAsync(message, session, null, ct)
                 // Return the user message and assistant response
                 let messages : AgentNet.ChatMessage list = [
                     { Role = AgentNet.ChatRole.User; Content = message }

@@ -49,9 +49,9 @@ type ChatAgent = {
     /// The configuration used to construct this agent (instructions, tools, etc.)
     Config: ChatAgentConfig
     /// Sends a message to the agent and returns only the assistant's final text.
-    Chat: string -> Task<string>
+    Chat: string -> System.Threading.CancellationToken -> Task<string>
     /// Sends a message to the agent and returns the full structured response.
-    ChatFull: string -> Task<ChatResponse>
+    ChatFull: string -> System.Threading.CancellationToken -> Task<ChatResponse>
     /// Streams incremental updates from the agent, including text deltas, 
     /// reasoning deltas, tool-call updates, and a final completion event.
     ChatStream: string -> IAsyncEnumerable<ChatStreamEvent>

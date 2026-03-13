@@ -13,11 +13,12 @@ type TypedAgent<'input, 'output> =
         ParseOutput: 'input -> string -> 'output
     }
     /// Invokes the typed agent with structured input/output
-    member this.Invoke (input: 'input) : Task<'output> = 
-        task { 
-            let prompt = this.FormatInput input 
-            let! response = this.ChatAgent.Chat prompt 
-            return this.ParseOutput input response 
+    member this.Invoke (input: 'input, ?ct: System.Threading.CancellationToken) : Task<'output> =
+        let ct = defaultArg ct System.Threading.CancellationToken.None
+        task {
+            let prompt = this.FormatInput input
+            let! response = this.ChatAgent.Chat prompt ct
+            return this.ParseOutput input response
         }
 
 /// Module functions for TypedAgent
@@ -32,7 +33,7 @@ module TypedAgent =
         (formatInput: 'input -> string)
         (parseOutput: 'input -> string -> 'output)
         (agent: ChatAgent) : TypedAgent<'input, 'output> =
-        { 
+        {
             ChatAgent = agent
             FormatInput = formatInput
             ParseOutput = parseOutput
@@ -41,3 +42,7 @@ module TypedAgent =
     /// Invokes the typed agent with structured input/output
     let invoke (input: 'input) (agent: TypedAgent<'input, 'output>) : Task<'output> =
         agent.Invoke input
+
+    /// Invokes the typed agent with a cancellation token
+    let invokeWithCancellation (ct: System.Threading.CancellationToken) (input: 'input) (agent: TypedAgent<'input, 'output>) : Task<'output> =
+        agent.Invoke(input, ct)

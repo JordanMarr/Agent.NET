@@ -398,7 +398,7 @@ var workflow = builder.Build();
 
 #### Resilience: Retry, Timeout, Fallback
 
-Build fault-tolerant workflows:
+Build fault-tolerant workflows with built-in decorators:
 
 ```fsharp
 let resilientWorkflow = workflow {
@@ -443,6 +443,55 @@ var combinedPolicy = Policy.WrapAsync(fallbackPolicy, timeoutPolicy, retryPolicy
 // Then wire into your executor...
 ```
 </details>
+
+#### Polly Integration: `policy`
+
+For advanced resilience scenarios — rate limiting, circuit breakers, hedging, or composing multiple strategies — use the `policy` decorator with a Polly `ResiliencePipeline`:
+
+```fsharp
+open Polly
+
+let retryPipeline =
+    ResiliencePipelineBuilder()
+        .AddRetry(Retry.RetryStrategyOptions(MaxRetryAttempts = 3))
+        .Build()
+
+let resilientWorkflow = workflow {
+    step unreliableStep
+    policy retryPipeline
+}
+```
+
+Compose multiple Polly strategies into a single pipeline:
+
+```fsharp
+let combinedPipeline =
+    ResiliencePipelineBuilder()
+        .AddRetry(Retry.RetryStrategyOptions(MaxRetryAttempts = 3, Delay = TimeSpan.FromSeconds 1.))
+        .AddTimeout(Timeout.TimeoutStrategyOptions(Timeout = TimeSpan.FromSeconds 30.))
+        .Build()
+
+let robustWorkflow = workflow {
+    step callExternalApi
+    policy combinedPipeline
+    step processResult
+}
+```
+
+Polly's `CancellationToken` is automatically threaded into each step's `WorkflowContext`, so cooperative cancellation works out of the box — Polly timeout cancels the token, and steps that observe `ctx.CancellationToken` abort promptly.
+
+#### Cancellation: `runWithCancellation`
+
+Pass an external `CancellationToken` into the entire workflow. The token flows through every step's `WorkflowContext` and into any Polly policies:
+
+```fsharp
+use cts = new CancellationTokenSource()
+cts.CancelAfter(TimeSpan.FromSeconds 10.)
+
+let! result = myWorkflow |> Workflow.InProcess.runWithCancellation cts.Token input
+```
+
+When the token is cancelled, the currently executing step receives the cancellation through `ctx.CancellationToken`, and any Polly pipeline wrapping the step also honours it. Subsequent steps do not execute.
 
 #### Composition: Nest Workflows
 
@@ -581,11 +630,12 @@ let! result = Workflow.InProcess.tryRun documentWorkflow
 | `ToolDef` | Tool definition with name, description, parameters, and MethodInfo |
 | `ParamInfo` | Parameter metadata: name, description, and type |
 | `ChatAgentConfig` | Agent configuration: name, instructions, and tools |
-| `ChatAgent` | Built agent with `Chat: string -> Task<string>` and `ChatFull: string -> Task<ChatResponse>` |
+| `ChatAgent` | Built agent with `Chat: string -> CancellationToken -> Task<string>` and `ChatFull` |
 | `TypedAgent<'i,'o>` | Typed wrapper around ChatAgent with format/parse functions |
 | `ChatResponse` | Full response with `Text` and `Messages` list |
 | `ChatMessage` | Message with `Role` and `Content` |
 | `ChatRole` | Union type: User, Assistant, System, Tool |
+| `WorkflowContext` | Context passed to executors with `RunId`, `State`, and `CancellationToken` |
 | `Executor<'i,'o>` | Workflow step that transforms input to output |
 | `WorkflowDef<'i,'o>` | Composable workflow definition |
 
@@ -609,6 +659,7 @@ let! result = Workflow.InProcess.tryRun documentWorkflow
 | `ChatAgent.build` | Builds a `ChatAgent` using an `IChatClient` and the configuration. |
 | `TypedAgent.create` | Wraps a `ChatAgent` with format/parse functions for typed input/output. |
 | `TypedAgent.invoke` | Invokes a typed agent: structured input in, structured output out. |
+| `TypedAgent.invokeWithCancellation` | Invokes a typed agent with a `CancellationToken` for cooperative cancellation. |
 
 
 ### Workflow CE Keywords
@@ -624,12 +675,14 @@ let! result = Workflow.InProcess.tryRun documentWorkflow
 | `timeout` | Fail if step exceeds duration |
 | `fallback` | Use alternative executor on failure |
 | `backoff` | Set retry delay strategy |
+| `policy` | Apply a Polly `ResiliencePipeline` to the preceding step (retry, timeout, circuit breaker, rate limiter, etc.) |
 
 ### Workflow Functions
 
 | Function | Description |
 |---------|-------------|
 | `Workflow.InProcess.run` | Runs a workflow in‑process and returns the final output. Throws on `tryStep` errors. |
+| `Workflow.InProcess.runWithCancellation` | Like `run`, but accepts an external `CancellationToken` that flows into every step and Polly policy. |
 | `Workflow.InProcess.tryRun` | Runs a workflow in‑process and returns `Result<'output,'error>` with early‑exit handling. |
 | `Workflow.Durable.run` | Runs a workflow inside a Durable Functions orchestrator. Throws on `tryStep` errors. |
 | `Workflow.Durable.tryRun` | Durable‑safe version of `tryRun`; returns `Result<'output,'error>` instead of throwing. |
@@ -688,7 +741,7 @@ let! result = Workflow.Durable.run ctx input stockAnalysisWF
 | Verbose executor classes | Normal F# functions |
 | Manual graph wiring | Declarative `step`, `fanOut`, `fanIn` |
 | Stringly-typed edges | Compiler-enforced type transitions |
-| Resilience via Polly boilerplate | Built-in `retry`, `timeout`, `fallback` |
+| Resilience via Polly boilerplate | Built-in `retry`, `timeout`, `fallback`, or bring your own Polly `policy` |
 
 ### Two Execution Modes
 
@@ -713,7 +766,8 @@ Built on the core Microsoft Agent Framework abstractions.
 
 - **Microsoft.Agents.AI** — agent primitives  
 - **Microsoft.Agents.AI.Workflows** — workflow graph + in‑memory execution  
-- **Microsoft.Extensions.AI.Abstractions** — AI service abstractions for .NET  
+- **Microsoft.Extensions.AI.Abstractions** — AI service abstractions for .NET
+- **Polly.Core** — resilience and transient-fault-handling (used by the `policy` decorator)  
 
 ### **AgentNet.Durable**  
 Adds durable execution by targeting the Durable Task abstractions.
