@@ -8,7 +8,7 @@ open AgentNet.InProcess
 module PollyDecorators =
 
     /// Wraps a step's ExecuteInProcess function with a Polly ResiliencePipeline.
-    let pipeline (pipeline: ResiliencePipeline) : Decorator =
+    let policy (pipeline: ResiliencePipeline) : Decorator =
         fun exec ->
             fun input ctx ->
                 let callback = fun (ct: System.Threading.CancellationToken) ->

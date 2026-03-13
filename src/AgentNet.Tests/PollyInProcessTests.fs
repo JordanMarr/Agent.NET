@@ -22,14 +22,14 @@ let ``Policy retries via Polly pipeline``() =
         else
             x * 2 |> Task.fromResult
 
-    let retryPipeline =
+    let retryPolicy =
         ResiliencePipelineBuilder()
             .AddRetry(Retry.RetryStrategyOptions(MaxRetryAttempts = 3))
             .Build()
 
     let resilientWorkflow = workflow {
         step unreliableStep
-        decorate (pipeline retryPipeline)
+        decorate (policy retryPolicy)
     }
 
     // Act
@@ -46,14 +46,14 @@ let ``Policy fails when Polly retries exhausted``() =
         failwith "Permanent error"
         x |> Task.fromResult
 
-    let retryPipeline =
+    let retryPolicy =
         ResiliencePipelineBuilder()
             .AddRetry(Retry.RetryStrategyOptions(MaxRetryAttempts = 2, Delay = TimeSpan.Zero))
             .Build()
 
     let resilientWorkflow = workflow {
         step alwaysFails
-        decorate (pipeline retryPipeline)
+        decorate (policy retryPolicy)
     }
 
     // Act & Assert
@@ -65,14 +65,14 @@ let ``Policy passes through on success``() =
     // Arrange: A step that always succeeds — policy should be a no-op
     let successStep (x: int) = x * 3 |> Task.fromResult
 
-    let retryPipeline =
+    let retryPolicy =
         ResiliencePipelineBuilder()
             .AddRetry(Retry.RetryStrategyOptions(MaxRetryAttempts = 2))
             .Build()
 
     let resilientWorkflow = workflow {
         step successStep
-        decorate (PollyDecorators.pipeline retryPipeline)
+        decorate (PollyDecorators.policy retryPolicy)
     }
 
     // Act
@@ -95,14 +95,14 @@ let ``Policy forwards CancellationToken to step via WorkflowContext``() =
             return raise (OperationCanceledException())
     })
 
-    let timeoutPipeline =
+    let timeoutPolicy =
         ResiliencePipelineBuilder()
             .AddTimeout(Timeout.TimeoutStrategyOptions(Timeout = TimeSpan.FromMilliseconds(100.)))
             .Build()
 
     let timedWorkflow = workflow {
         step cancellableExecutor
-        decorate (PollyDecorators.pipeline timeoutPipeline)
+        decorate (PollyDecorators.policy timeoutPolicy)
     }
 
     // Act & Assert - Polly should cancel the token, causing the step to abort
@@ -137,14 +137,14 @@ let ``Policy forwards CancellationToken through TypedAgent to ChatAgent``() =
             (fun _ response -> response)
             slowChatAgent
 
-    let timeoutPipeline =
+    let timeoutPolicy =
         ResiliencePipelineBuilder()
             .AddTimeout(Timeout.TimeoutStrategyOptions(Timeout = TimeSpan.FromMilliseconds(100.)))
             .Build()
 
     let timedWorkflow = workflow {
         step typedAgent
-        decorate (PollyDecorators.pipeline timeoutPipeline)
+        decorate (PollyDecorators.policy timeoutPolicy)
     }
 
     // Act & Assert - Polly timeout should cancel the token, which flows through TypedAgent to ChatAgent.Chat
@@ -161,7 +161,7 @@ let ``External CancellationToken via runWithCancellation flows through Polly pol
     let mutable step3Ran = false
 
     // Polly retry policy
-    let retryPipeline =
+    let retryPolicy =
         ResiliencePipelineBuilder()
             .AddRetry(Retry.RetryStrategyOptions(MaxRetryAttempts = 3, Delay = TimeSpan.Zero))
             .Build()
@@ -191,11 +191,11 @@ let ``External CancellationToken via runWithCancellation flows through Polly pol
 
     let myWorkflow = workflow {
         step step1
-        decorate (pipeline retryPipeline)
+        decorate (policy retryPolicy)
         step step2
-        decorate (pipeline retryPipeline)
+        decorate (policy retryPolicy)
         step step3
-        decorate (pipeline retryPipeline)
+        decorate (policy retryPolicy)
     }
 
     // Schedule cancellation after 150ms (step 1 finishes in ~50ms, step 2 is in progress)
