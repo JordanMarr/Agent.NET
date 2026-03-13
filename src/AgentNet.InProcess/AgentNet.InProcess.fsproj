@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <OutputType>Library</OutputType>
@@ -9,7 +9,7 @@
   <!-- NuGet Package Metadata -->
   <PropertyGroup>
     <PackageId>AgentNet.InProcess</PackageId>
-    <Version>1.0.0-rc.3</Version>
+    <Version>1.0.0-rc.4</Version>
     <Authors>Jordan Marr</Authors>
     <Description>In-process workflow execution for AgentNet. Compiles F# workflow definitions to Microsoft Agent Framework (MAF) format and executes them in-process.</Description>
     <PackageTags>fsharp;ai;agents;llm;microsoft-agent-framework;workflows;in-process</PackageTags>
