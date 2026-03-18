@@ -56,9 +56,25 @@ let ``Policy fails when Polly retries exhausted``() =
         decorate (policy retryPolicy)
     }
 
-    // Act & Assert
-    Assert.Catch(fun () ->
-        (resilientWorkflow |> Workflow.InProcess.run 5).GetAwaiter().GetResult() |> ignore) |> ignore
+    // Act & Assert — the original exception must propagate, not "No WorkflowOutputEvent found"
+    let ex = Assert.Catch(fun () ->
+        (resilientWorkflow |> Workflow.InProcess.run 5).GetAwaiter().GetResult() |> ignore)
+    test <@ ex.Message = "Permanent error" @>
+
+[<Test>]
+let ``Step exception propagates instead of being swallowed by MAF``() =
+    // Arrange: A step that throws a specific exception (no Polly wrapping)
+    let failingStep (x: int) : Task<int> =
+        raise (InvalidOperationException "Something broke")
+
+    let wf = workflow {
+        step failingStep
+    }
+
+    // Act & Assert — original exception type and message must survive MAF execution
+    let ex = Assert.Catch<InvalidOperationException>(fun () ->
+        (wf |> Workflow.InProcess.run 5).GetAwaiter().GetResult() |> ignore)
+    test <@ ex.Message = "Something broke" @>
 
 [<Test>]
 let ``Policy passes through on success``() =
