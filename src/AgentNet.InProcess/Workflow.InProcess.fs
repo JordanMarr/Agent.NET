@@ -1,6 +1,7 @@
 namespace AgentNet.InProcess
 
 open System
+open System.Runtime.ExceptionServices
 open System.Threading.Tasks
 open AgentNet
 open AgentNet.Interop
@@ -105,6 +106,24 @@ module Workflow =
 
         // ============ MAF IN-PROCESS EXECUTION ============
 
+        /// Wraps each step's ExecuteInProcess to capture exceptions before MAF can swallow them.
+        /// MAF's Lockstep.RunAsync catches executor exceptions internally and does not re-throw,
+        /// which causes "No WorkflowOutputEvent found" instead of the real error.
+        let private wrapStepsWithExceptionCapture (captured: ExceptionDispatchInfo ref) (workflow: WorkflowDef<'i, 'o, 'e>) =
+            let wrappedSteps =
+                workflow.TypedSteps
+                |> List.map (fun step ->
+                    { step with
+                        ExecuteInProcess = fun input ctx ->
+                            task {
+                                try
+                                    return! step.ExecuteInProcess input ctx
+                                with ex ->
+                                    System.Threading.Volatile.Write(&captured.contents, ExceptionDispatchInfo.Capture ex)
+                                    return raise ex
+                            } })
+            { workflow with TypedSteps = wrappedSteps }
+
         /// Converts MAF result data to the expected F# output type.
         /// Handles List<object> from parallel execution by converting to F# list.
         let private convertToOutput<'output> (data: obj) : 'output =
@@ -138,11 +157,20 @@ module Workflow =
         /// DO NOT CHANGE THIS FUNCTION UNLESS EXPLICIT INSTRUCTIONS ARE GIVEN.
         let run<'input, 'output, 'error> (input: 'input) (workflow: WorkflowDef<'input, 'output, 'error>) : Task<'output> =
             task {
+                // Wrap steps to capture exceptions before MAF swallows them
+                let captured = ref Unchecked.defaultof<ExceptionDispatchInfo>
+                let wrappedWorkflow = wrapStepsWithExceptionCapture captured workflow
+
                 // Compile to MAF workflow
-                let mafWorkflow = toMAF workflow
+                let mafWorkflow = toMAF wrappedWorkflow
 
                 // Run via Lockstep InProcessExecution (runs all SuperSteps synchronously)
                 let! run = MAFInProcessExecution.Lockstep.RunAsync(mafWorkflow, input :> obj, null, System.Threading.CancellationToken.None)
+
+                // Re-throw captured exception if MAF swallowed it
+                let edi = System.Threading.Volatile.Read(&captured.contents)
+                if not (isNull edi) then
+                    edi.Throw()
 
                 // Find the WorkflowOutputEvent - the definitive workflow output
                 let mutable lastResult: obj option = None
@@ -162,9 +190,16 @@ module Workflow =
         /// Steps and Polly policies receive the token via ctx.CancellationToken.
         let runWithCancellation<'input, 'output, 'error> (ct: System.Threading.CancellationToken) (input: 'input) (workflow: WorkflowDef<'input, 'output, 'error>) : Task<'output> =
             task {
-                let mafWorkflow = toMAFWithCancellation ct workflow
+                let captured = ref Unchecked.defaultof<ExceptionDispatchInfo>
+                let wrappedWorkflow = wrapStepsWithExceptionCapture captured workflow
+
+                let mafWorkflow = toMAFWithCancellation ct wrappedWorkflow
 
                 let! run = MAFInProcessExecution.Lockstep.RunAsync(mafWorkflow, input :> obj, null, ct)
+
+                let edi = System.Threading.Volatile.Read(&captured.contents)
+                if not (isNull edi) then
+                    edi.Throw()
 
                 let mutable lastResult: obj option = None
                 for evt in run.NewEvents do
@@ -183,7 +218,10 @@ module Workflow =
         /// Returns Result<'output, 'error> where Error contains the typed error from tryStep.
         let tryRun<'input, 'output, 'error> (input: 'input) (workflow: WorkflowDef<'input, 'output, 'error>) : Task<Result<'output, 'error>> =
             task {
-                let mafWorkflow = toMAF workflow
+                let captured = ref Unchecked.defaultof<ExceptionDispatchInfo>
+                let wrappedWorkflow = wrapStepsWithExceptionCapture captured workflow
+
+                let mafWorkflow = toMAF wrappedWorkflow
                 let! run = MAFInProcessExecution.Lockstep.RunAsync(mafWorkflow, input :> obj, null, System.Threading.CancellationToken.None)
 
                 let mutable completed = None
@@ -207,6 +245,11 @@ module Workflow =
                     return Ok (convertToOutput<'output> data)
 
                 | None, None ->
+                    // Re-throw captured exception if MAF swallowed it
+                    let edi = System.Threading.Volatile.Read(&captured.contents)
+                    if not (isNull edi) then
+                        edi.Throw()
+
                     return failwith "Workflow terminated without success or early exit."
 
             }
