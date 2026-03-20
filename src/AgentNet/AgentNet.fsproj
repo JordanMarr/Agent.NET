@@ -44,6 +44,9 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.Agents.AI" />
     <PackageReference Include="Microsoft.Agents.AI.Workflows" />
+    <!-- Pinned explicitly because MAF rc4 pulls in a mismatched Microsoft.Extensions.AI version.
+         This ensures consumers get the correct version transitively.
+         Remove this pin once Microsoft fixes their MAF package dependencies. -->
     <PackageReference Include="Microsoft.Extensions.AI" />
     <PackageReference Include="Microsoft.Extensions.AI.Abstractions" />
   </ItemGroup>
