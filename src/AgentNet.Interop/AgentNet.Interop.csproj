@@ -9,10 +9,10 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Microsoft.Agents.AI" />
-    <PackageReference Include="Microsoft.Agents.AI.Workflows" />
-    <PackageReference Include="Microsoft.DurableTask.Abstractions" />
-    <PackageReference Include="Microsoft.Extensions.AI.Abstractions" />
+    <PackageReference Include="Microsoft.Agents.AI" Version="$(MicrosoftAgentsVersion)" />
+    <PackageReference Include="Microsoft.Agents.AI.Workflows" Version="$(MicrosoftAgentsVersion)" />
+    <PackageReference Include="Microsoft.DurableTask.Abstractions" Version="$(MicrosoftDurableTaskAbstractionsVersion)" />
+    <PackageReference Include="Microsoft.Extensions.AI.Abstractions" Version="$(MicrosoftExtensionsAIVersion)" />
   </ItemGroup>
 
 </Project>

@@ -1,0 +1,9 @@
+<Project>
+
+  <PropertyGroup>
+    <MicrosoftAgentsVersion>1.0.0-rc4</MicrosoftAgentsVersion>
+    <MicrosoftDurableTaskAbstractionsVersion>1.22.0</MicrosoftDurableTaskAbstractionsVersion>
+    <MicrosoftExtensionsAIVersion>10.4.0</MicrosoftExtensionsAIVersion>
+  </PropertyGroup>
+
+</Project>
