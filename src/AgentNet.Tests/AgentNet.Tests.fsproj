@@ -21,9 +21,12 @@
     <Compile Include="StreamingTests.fs" />
     <Compile Include="DecorateTests.fs" />
     <Compile Include="PollyInProcessTests.fs" />
+    <Compile Include="ExceptionBubblingTests.fs" />
   </ItemGroup>
 
   <ItemGroup>
+    <PackageReference Include="AgentNet.Durable" Version="1.0.0-rc.3" />
+    <PackageReference Include="AgentNet.InProcess.Polly" Version="1.0.0-rc.4" />
     <PackageReference Include="Microsoft.Extensions.AI.Abstractions" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
     <PackageReference Include="NUnit" Version="4.4.0" />
@@ -31,6 +34,7 @@
     <PackageReference Include="Unquote" Version="7.0.1" />
   </ItemGroup>
 
+  <!--
   <ItemGroup>
     <ProjectReference Include="..\AgentNet\AgentNet.fsproj" />
     <ProjectReference Include="..\AgentNet.InProcess\AgentNet.InProcess.fsproj" />
@@ -38,6 +42,7 @@
     <ProjectReference Include="..\AgentNet.Durable\AgentNet.Durable.fsproj" />
     <ProjectReference Include="..\AgentNet.Interop\AgentNet.Interop.csproj" />
   </ItemGroup>
+  -->
 
   <ItemGroup>
     <PackageReference Update="FSharp.Core" Version="8.0.100" />
