@@ -1,5 +1,7 @@
 <Project>
 
+  <!-- See also: Directory.Build.props for AgentNet package versions. -->
+
   <!-- ========================================================= -->
   <!--  Microsoft Agents Framework (MAF)                         -->
   <!--  These packages must always be version-aligned.           -->

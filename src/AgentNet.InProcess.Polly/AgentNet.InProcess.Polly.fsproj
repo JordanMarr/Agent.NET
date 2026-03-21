@@ -9,7 +9,7 @@
   <!-- NuGet Package Metadata -->
   <PropertyGroup>
     <PackageId>AgentNet.InProcess.Polly</PackageId>
-    <Version>1.0.0-rc.4</Version>
+    <Version>$(AgentNetInProcessVersion)</Version>
     <Authors>Jordan Marr, Onur Gumus</Authors>
     <Description>Polly resilience pipeline decorators for AgentNet in-process workflows. Wraps workflow steps with Polly ResiliencePipeline for retry, timeout, circuit-breaker and other resilience strategies.</Description>
     <PackageTags>fsharp;ai;agents;llm;microsoft-agent-framework;workflows;polly;resilience</PackageTags>
