@@ -1,14 +1,15 @@
 <Project>
 
-  <!-- ===================================================================== -->
-  <!--  AgentNet package versions                                            -->
-  <!--  AgentNet.InProcess and AgentNet.InProcess.Polly are bumped together. -->
-  <!--  See also: Directory.Build.targets for external dependency versions.  -->
-  <!-- ===================================================================== -->
-  <PropertyGroup>
-    <AgentNetVersion>1.0.0-rc.4</AgentNetVersion>
-    <AgentNetInProcessVersion>1.0.0-rc.5</AgentNetInProcessVersion>
-    <AgentNetDurableVersion>1.0.0-rc.3</AgentNetDurableVersion>
-  </PropertyGroup>
+    <!-- ===================================================================== -->
+    <!--  AgentNet package versions                                            -->
+    <!--  All AgentNet packages (Core, InProcess, Durable, Polly) share        -->
+    <!--  the same version and are bumped together as a single release wave.   -->
+    <!--  See Directory.Build.targets for external dependency versions.        -->
+    <!-- ===================================================================== -->
+    <PropertyGroup>
+        <AgentNetVersion>1.0.0-rc.6</AgentNetVersion>
+        <AgentNetInProcessVersion>$(AgentNetVersion)</AgentNetInProcessVersion>
+        <AgentNetDurableVersion>$(AgentNetVersion)</AgentNetDurableVersion>
+    </PropertyGroup>
 
 </Project>
