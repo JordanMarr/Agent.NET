@@ -1,27 +1,26 @@
-/// Tests that bundled AgentNet.Interop.dll can fully load with all its dependencies.
+/// Tests that bundled interop DLLs can fully load with all their dependencies.
 /// This catches missing transitive dependencies in published NuGet packages.
 module AgentNet.Tests.InteropAssemblyTests
 
 open System
+open System.IO
 open System.Reflection
 open NUnit.Framework
 open Swensen.Unquote
 
-[<Test>]
-let ``AgentNet.Interop assembly loads and all types resolve`` () =
-    // Find the AgentNet.Interop assembly (bundled as a DLL in the package)
-    let interopAssembly =
-        AppDomain.CurrentDomain.GetAssemblies()
-        |> Array.tryFind (fun a -> a.GetName().Name = "AgentNet.Interop")
+let private loadAndVerifyAssembly (assemblyName: string) =
+    let dir = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)
+    let path = Path.Combine(dir, $"{assemblyName}.dll")
 
-    test <@ interopAssembly.IsSome @>
+    if not (File.Exists(path)) then
+        Assert.Fail($"Assembly {assemblyName} not found at {path}")
+
+    let assembly = Assembly.LoadFrom(path)
 
     // Force the runtime to fully resolve all types and their members.
-    // GetTypes() alone won't trigger assembly resolution for types only used
-    // as method parameters. We must enumerate methods/constructors to force
-    // the JIT to resolve parameter types like TaskOrchestrationContext.
+    // This triggers assembly resolution for all dependencies.
     let mutable errors = ResizeArray<string>()
-    for t in interopAssembly.Value.GetTypes() do
+    for t in assembly.GetTypes() do
         try
             t.GetMethods(BindingFlags.Public ||| BindingFlags.NonPublic ||| BindingFlags.Instance ||| BindingFlags.Static ||| BindingFlags.DeclaredOnly)
             |> Array.iter (fun m ->
@@ -42,4 +41,8 @@ let ``AgentNet.Interop assembly loads and all types resolve`` () =
 
     if errors.Count > 0 then
         let msg = String.Join(Environment.NewLine, errors)
-        Assert.Fail($"Failed to resolve types/members in AgentNet.Interop:{Environment.NewLine}{msg}")
+        Assert.Fail($"Failed to resolve types/members in {assemblyName}:{Environment.NewLine}{msg}")
+
+[<Test>]
+let ``AgentNet.InProcess.Interop assembly loads and all types resolve`` () =
+    loadAndVerifyAssembly "AgentNet.InProcess.Interop"

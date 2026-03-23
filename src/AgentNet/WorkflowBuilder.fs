@@ -253,7 +253,7 @@ type WorkflowBuilder() =
                     let innerFunc = Func<obj, Task<obj>>(fun input ->
                         let ctx = WorkflowContext.create()
                         innerPacked.ExecuteInProcess input ctx)
-                    Interop.ExecutorFactory.CreateRetryExecutor($"Retry_{stepIndex}", maxRetries, stepIndex, innerFunc)
+                    Interop.DurableExecutorFactory.CreateRetryExecutor($"Retry_{stepIndex}", maxRetries, stepIndex, innerFunc)
                 ActivityInfo = innerPacked.ActivityInfo
                 InnerStep = Some innerPacked
                 FallbackStep = None
@@ -288,7 +288,7 @@ type WorkflowBuilder() =
                     let innerFunc = Func<obj, Task<obj>>(fun input ->
                         let ctx = WorkflowContext.create()
                         innerPacked.ExecuteInProcess input ctx)
-                    Interop.ExecutorFactory.CreateTimeoutExecutor($"Timeout_{stepIndex}", duration, stepIndex, innerFunc)
+                    Interop.DurableExecutorFactory.CreateTimeoutExecutor($"Timeout_{stepIndex}", duration, stepIndex, innerFunc)
                 ActivityInfo = innerPacked.ActivityInfo
                 InnerStep = Some innerPacked
                 FallbackStep = None
@@ -330,7 +330,7 @@ type WorkflowBuilder() =
                     let fallbackFunc = Func<obj, Task<obj>>(fun input ->
                         let ctx = WorkflowContext.create()
                         fallbackPacked.ExecuteInProcess input ctx)
-                    Interop.ExecutorFactory.CreateFallbackExecutor($"Fallback_{stepIndex}", durableId, stepIndex, innerFunc, fallbackFunc)
+                    Interop.DurableExecutorFactory.CreateFallbackExecutor($"Fallback_{stepIndex}", durableId, stepIndex, innerFunc, fallbackFunc)
                 ActivityInfo = innerPacked.ActivityInfo
                 InnerStep = Some innerPacked
                 FallbackStep = Some fallbackPacked

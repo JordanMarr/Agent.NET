@@ -42,7 +42,9 @@
 		<ProjectReference Include="..\AgentNet.InProcess\AgentNet.InProcess.fsproj" />
 		<ProjectReference Include="..\AgentNet.InProcess.Polly\AgentNet.InProcess.Polly.fsproj" />
 		<ProjectReference Include="..\AgentNet.Durable\AgentNet.Durable.fsproj" />
-		<ProjectReference Include="..\AgentNet.Interop\AgentNet.Interop.csproj" />
+		<ProjectReference Include="..\AgentNet.Workflow.Abstractions\AgentNet.Workflow.Abstractions.csproj" />
+		<ProjectReference Include="..\AgentNet.InProcess.Interop\AgentNet.InProcess.Interop.csproj" />
+		<ProjectReference Include="..\AgentNet.Durable.Interop\AgentNet.Durable.Interop.csproj" />
 	</ItemGroup>
 
 	<ItemGroup Condition="'$(TestLivePackages)' == 'true'">
@@ -50,7 +52,11 @@
 		<PackageReference Include="AgentNet.InProcess.Polly" Version="$(AgentNetInProcessVersion)" />
 	</ItemGroup>
 
+	<!-- InProcess mode: installs all packages for compile-time resolution, but
+	     InteropAssemblyTests verifies that AgentNet.InProcess.Interop.dll has no
+	     DurableTask dependency — catching Onur's bug at runtime. -->
 	<ItemGroup Condition="'$(TestLivePackages)' == 'InProcess'">
+		<PackageReference Include="AgentNet.Durable" Version="$(AgentNetDurableVersion)" />
 		<PackageReference Include="AgentNet.InProcess.Polly" Version="$(AgentNetInProcessVersion)" />
 	</ItemGroup>
 
