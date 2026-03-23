@@ -66,3 +66,31 @@ pipeline "test" {
 
     runIfOnlySpecified
 }
+
+pipeline "test-live" {
+    description "Test against published NuGet packages (all packages)"
+
+    stage "build" {
+        run "dotnet build src/AgentNet.Tests/AgentNet.Tests.fsproj -p:TestLivePackages=true"
+    }
+
+    stage "test" {
+        run "dotnet test src/AgentNet.Tests/AgentNet.Tests.fsproj -p:TestLivePackages=true --no-build"
+    }
+
+    runIfOnlySpecified
+}
+
+pipeline "test-live-inprocess" {
+    description "Test against published InProcess packages only (catches missing transitive deps)"
+
+    stage "build" {
+        run "dotnet build src/AgentNet.Tests/AgentNet.Tests.fsproj -p:TestLivePackages=InProcess"
+    }
+
+    stage "test" {
+        run "dotnet test src/AgentNet.Tests/AgentNet.Tests.fsproj -p:TestLivePackages=InProcess --no-build --filter FullyQualifiedName!~DurableWorkflowTests"
+    }
+
+    runIfOnlySpecified
+}

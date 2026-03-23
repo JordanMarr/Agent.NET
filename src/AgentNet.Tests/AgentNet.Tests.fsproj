@@ -16,7 +16,7 @@
 		<Compile Include="ParallelWorkflowTests.fs" />
 		<Compile Include="ResultWorkflowTests.fs" />
 		<Compile Include="ResilienceWorkflowTests.fs" />
-		<Compile Include="DurableWorkflowTests.fs" />
+		<Compile Include="DurableWorkflowTests.fs" Condition="'$(TestLivePackages)' != 'InProcess'" />
 		<Compile Include="CompositionWorkflowTests.fs" />
 		<Compile Include="StreamingTests.fs" />
 		<Compile Include="DecorateTests.fs" />
@@ -32,20 +32,26 @@
 		<PackageReference Include="Unquote" Version="7.0.1" />
 	</ItemGroup>
 
-	<!-- For testing live packages.
-	<ItemGroup>
-		<PackageReference Include="AgentNet.Durable" Version="1.0.0-rc.3" />
-		<PackageReference Include="AgentNet.InProcess.Polly" Version="1.0.0-rc.5" />
+	<!-- Default: use ProjectReferences for development.
+	     To test against published NuGet packages, run with:
+	       -p:TestLivePackages=true        (all packages)
+	       -p:TestLivePackages=InProcess   (InProcess only, no Durable — catches missing transitive deps) -->
+	<ItemGroup Condition="'$(TestLivePackages)' != 'true' And '$(TestLivePackages)' != 'InProcess'">
+		<ProjectReference Include="..\AgentNet\AgentNet.fsproj" />
+		<ProjectReference Include="..\AgentNet.InProcess\AgentNet.InProcess.fsproj" />
+		<ProjectReference Include="..\AgentNet.InProcess.Polly\AgentNet.InProcess.Polly.fsproj" />
+		<ProjectReference Include="..\AgentNet.Durable\AgentNet.Durable.fsproj" />
+		<ProjectReference Include="..\AgentNet.Interop\AgentNet.Interop.csproj" />
 	</ItemGroup>
-	-->
 
-  <ItemGroup>
-    <ProjectReference Include="..\AgentNet\AgentNet.fsproj" />
-    <ProjectReference Include="..\AgentNet.InProcess\AgentNet.InProcess.fsproj" />
-    <ProjectReference Include="..\AgentNet.InProcess.Polly\AgentNet.InProcess.Polly.fsproj" />
-    <ProjectReference Include="..\AgentNet.Durable\AgentNet.Durable.fsproj" />
-    <ProjectReference Include="..\AgentNet.Interop\AgentNet.Interop.csproj" />
-  </ItemGroup>
+	<ItemGroup Condition="'$(TestLivePackages)' == 'true'">
+		<PackageReference Include="AgentNet.Durable" Version="$(AgentNetDurableVersion)" />
+		<PackageReference Include="AgentNet.InProcess.Polly" Version="$(AgentNetInProcessVersion)" />
+	</ItemGroup>
+
+	<ItemGroup Condition="'$(TestLivePackages)' == 'InProcess'">
+		<PackageReference Include="AgentNet.InProcess.Polly" Version="$(AgentNetInProcessVersion)" />
+	</ItemGroup>
 
 	<ItemGroup>
 		<PackageReference Update="FSharp.Core" Version="8.0.100" />
