@@ -22,6 +22,7 @@
 		<Compile Include="DecorateTests.fs" />
 		<Compile Include="PollyInProcessTests.fs" />
 		<Compile Include="ExceptionBubblingTests.fs" />
+		<Compile Include="InteropAssemblyTests.fs" />
 	</ItemGroup>
 
 	<ItemGroup>
