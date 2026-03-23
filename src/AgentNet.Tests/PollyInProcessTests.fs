@@ -131,7 +131,7 @@ let ``Policy forwards CancellationToken through TypedAgent to ChatAgent``() =
     // Arrange: A ChatAgent whose Chat function observes the cancellation token
     let mutable tokenWasCancelled = false
 
-    let config = { Name = Some "TestAgent"; Instructions = "test"; Tools = [] }
+    let config = { Name = Some "TestAgent"; Instructions = "test"; Tools = []; ChatOptions = None }
 
     let chatFn msg ct = task {
         try
