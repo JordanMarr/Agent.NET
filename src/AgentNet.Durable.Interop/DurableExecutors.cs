@@ -5,6 +5,22 @@ using Microsoft.DurableTask;
 namespace AgentNet.Interop;
 
 // ============================================================================
+// DURABLE EARLY-EXIT RETURN
+// ============================================================================
+
+/// <summary>
+/// Required for early return from durable executor.
+/// </summary>
+/// <param name="error"></param>
+public class EarlyExitReturn(object error)
+{
+    /// <summary>
+    /// The error object associated with the early exit.
+    /// </summary>
+    public object Error { get; } = error;
+}
+
+// ============================================================================
 // DURABLE EXECUTOR MODEL
 // ============================================================================
 
