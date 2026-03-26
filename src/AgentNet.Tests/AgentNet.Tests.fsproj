@@ -42,7 +42,6 @@
 		<ProjectReference Include="..\AgentNet.InProcess\AgentNet.InProcess.fsproj" />
 		<ProjectReference Include="..\AgentNet.InProcess.Polly\AgentNet.InProcess.Polly.fsproj" />
 		<ProjectReference Include="..\AgentNet.Durable\AgentNet.Durable.fsproj" />
-		<ProjectReference Include="..\AgentNet.Workflow.Abstractions\AgentNet.Workflow.Abstractions.csproj" />
 		<ProjectReference Include="..\AgentNet.InProcess.Interop\AgentNet.InProcess.Interop.csproj" />
 		<ProjectReference Include="..\AgentNet.Durable.Interop\AgentNet.Durable.Interop.csproj" />
 	</ItemGroup>

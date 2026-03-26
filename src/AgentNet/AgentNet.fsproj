@@ -42,6 +42,10 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\AgentNet.InProcess.Interop\AgentNet.InProcess.Interop.csproj" PrivateAssets="All" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="Microsoft.Agents.AI" />
     <PackageReference Include="Microsoft.Agents.AI.Workflows" />
     <!-- Pinned explicitly because MAF rc4 pulls in a mismatched Microsoft.Extensions.AI version.
@@ -51,11 +55,6 @@
     <PackageReference Include="Microsoft.Extensions.AI.Abstractions" />
   </ItemGroup>
 
-  <ItemGroup>
-    <ProjectReference Include="..\AgentNet.Workflow.Abstractions\AgentNet.Workflow.Abstractions.csproj" PrivateAssets="All" />
-    <ProjectReference Include="..\AgentNet.InProcess.Interop\AgentNet.InProcess.Interop.csproj" PrivateAssets="All" />
-    <ProjectReference Include="..\AgentNet.Durable.Interop\AgentNet.Durable.Interop.csproj" PrivateAssets="All" />
-  </ItemGroup>
 
   <ItemGroup>
     <PackageReference Update="FSharp.Core" Version="8.0.100" />

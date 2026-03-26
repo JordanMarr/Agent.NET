@@ -30,17 +30,12 @@
 
   <ItemGroup>
     <ProjectReference Include="..\AgentNet\AgentNet.fsproj" />
-    <ProjectReference Include="..\AgentNet.Workflow.Abstractions\AgentNet.Workflow.Abstractions.csproj" PrivateAssets="All" />
     <ProjectReference Include="..\AgentNet.InProcess.Interop\AgentNet.InProcess.Interop.csproj" PrivateAssets="All" />
-    <!-- Compile-time only: needed because PackedTypedStep references IExecutor in its type signature.
-         NOT bundled in the nupkg — only loaded at runtime when AgentNet.Durable is used. -->
-    <ProjectReference Include="..\AgentNet.Durable.Interop\AgentNet.Durable.Interop.csproj" PrivateAssets="All" />
   </ItemGroup>
 
   <!-- Include interop DLLs in NuGet package -->
   <Target Name="IncludeInteropInPackage" BeforeTargets="BuildOnlySettings">
     <ItemGroup>
-      <BuildOutputInPackage Include="$(OutputPath)AgentNet.Workflow.Abstractions.dll" />
       <BuildOutputInPackage Include="$(OutputPath)AgentNet.InProcess.Interop.dll" />
     </ItemGroup>
   </Target>

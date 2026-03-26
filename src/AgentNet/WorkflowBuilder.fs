@@ -249,11 +249,6 @@ type WorkflowBuilder() =
                                 return! retry (attempt + 1)
                         }
                     retry 0
-                CreateDurableExecutor = fun stepIndex ->
-                    let innerFunc = Func<obj, Task<obj>>(fun input ->
-                        let ctx = WorkflowContext.create()
-                        innerPacked.ExecuteInProcess input ctx)
-                    Interop.DurableExecutorFactory.CreateRetryExecutor($"Retry_{stepIndex}", maxRetries, stepIndex, innerFunc)
                 ActivityInfo = innerPacked.ActivityInfo
                 InnerStep = Some innerPacked
                 FallbackStep = None
@@ -284,11 +279,6 @@ type WorkflowBuilder() =
                         else
                             return! execution
                     }
-                CreateDurableExecutor = fun stepIndex ->
-                    let innerFunc = Func<obj, Task<obj>>(fun input ->
-                        let ctx = WorkflowContext.create()
-                        innerPacked.ExecuteInProcess input ctx)
-                    Interop.DurableExecutorFactory.CreateTimeoutExecutor($"Timeout_{stepIndex}", duration, stepIndex, innerFunc)
                 ActivityInfo = innerPacked.ActivityInfo
                 InnerStep = Some innerPacked
                 FallbackStep = None
@@ -323,14 +313,6 @@ type WorkflowBuilder() =
                         with _ ->
                             return! fallbackPacked.ExecuteInProcess input ctx
                     }
-                CreateDurableExecutor = fun stepIndex ->
-                    let innerFunc = Func<obj, Task<obj>>(fun input ->
-                        let ctx = WorkflowContext.create()
-                        innerPacked.ExecuteInProcess input ctx)
-                    let fallbackFunc = Func<obj, Task<obj>>(fun input ->
-                        let ctx = WorkflowContext.create()
-                        fallbackPacked.ExecuteInProcess input ctx)
-                    Interop.DurableExecutorFactory.CreateFallbackExecutor($"Fallback_{stepIndex}", durableId, stepIndex, innerFunc, fallbackFunc)
                 ActivityInfo = innerPacked.ActivityInfo
                 InnerStep = Some innerPacked
                 FallbackStep = Some fallbackPacked
