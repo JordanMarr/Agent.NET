@@ -55,19 +55,6 @@ module DecorateTests =
         }
 
     [<Test>]
-    let ``decorate does not affect durable executor`` () =
-        let wf =
-            workflow {
-                step (fun (x: int) -> task { return x + 1 })
-                decorate countDecorator
-            }
-
-        let packed = wf.TypedSteps |> List.last
-
-        Assert.That(packed.CreateDurableExecutor, Is.Not.Null)
-        test <@ not (obj.ReferenceEquals(packed.ExecuteInProcess, packed.CreateDurableExecutor)) @>
-
-    [<Test>]
     let ``decorator preserves output`` () =
         task {
             let wf =

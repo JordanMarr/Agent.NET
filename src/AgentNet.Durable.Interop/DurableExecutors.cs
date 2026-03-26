@@ -91,7 +91,7 @@ public static class DurableExecutorFactory
     }
 
     /// <summary>
-    /// Creates an executor that waits for an external event.
+    /// Creates an executor that waits for an external event (generic version).
     /// </summary>
     public static IExecutor CreateAwaitEventExecutor<TOutput>(
         string durableId,
@@ -103,6 +103,30 @@ public static class DurableExecutorFactory
         {
             var result = await ctx.WaitForExternalEvent<TOutput>(eventName);
             return (object?)result;
+        });
+    }
+
+    /// <summary>
+    /// Creates an executor that waits for an external event (non-generic version).
+    /// Uses reflection to call WaitForExternalEvent&lt;T&gt; with a runtime Type.
+    /// </summary>
+    public static IExecutor CreateAwaitEventExecutor(
+        string durableId,
+        string eventName,
+        int stepIndex,
+        Type outputType)
+    {
+        var id = $"{durableId}_{stepIndex}";
+        return new DurableStepExecutor(id, async (ctx, _) =>
+        {
+            var method = typeof(TaskOrchestrationContext)
+                .GetMethod(nameof(TaskOrchestrationContext.WaitForExternalEvent), [typeof(string)])!
+                .MakeGenericMethod(outputType);
+
+            var task = (Task)method.Invoke(ctx, [eventName])!;
+            await task;
+
+            return task.GetType().GetProperty("Result")!.GetValue(task);
         });
     }
 

@@ -46,8 +46,6 @@ type PackedTypedStep = {
     OutputType: System.Type
     /// Execute this step in-process (types captured in closure)
     ExecuteInProcess: obj -> WorkflowContext -> Task<obj>
-    /// Factory to create a durable executor (types captured in closure, no reflection needed)
-    CreateDurableExecutor: int -> Interop.IExecutor
     /// Activity info for registration: (durableId, executeFunc)
     /// None for durable-only operations (AwaitEvent, Delay)
     ActivityInfo: (string * (obj -> Task<obj>)) option
@@ -105,24 +103,14 @@ type WorkflowState<'input, 'output, 'error> = {
 /// reflection at execution time. The packed steps contain fully typed closures.
 module PackedTypedStep =
 
-    /// Creates execution functions for a step by wrapping with obj boundaries.
+    /// Creates an in-process execution function for a step by wrapping with obj boundaries.
     /// The inner execution remains fully typed; only the boundaries use boxing.
-    let private createExecuteFuncs<'i, 'o> (execute: 'i -> WorkflowContext -> Task<'o>) =
-        let inProcessExec = fun (input: obj) (ctx: WorkflowContext) -> task {
+    let private createInProcessExec<'i, 'o> (execute: 'i -> WorkflowContext -> Task<'o>) =
+        fun (input: obj) (ctx: WorkflowContext) -> task {
             let typedInput = input :?> 'i
             let! result = execute typedInput ctx
             return result :> obj
         }
-        let durableExecFactory = fun (stepIndex: int) (durableId: string) ->
-            let wrappedFn = Func<obj, Task<obj>>(fun input ->
-                let ctx = WorkflowContext.create()
-                task {
-                    let typedInput = input :?> 'i
-                    let! result = execute typedInput ctx
-                    return result :> obj
-                })
-            Interop.DurableExecutorFactory.CreateStepExecutor(durableId, stepIndex, wrappedFn)
-        (inProcessExec, durableExecFactory)
 
     /// Packs a TypedWorkflowStep into a PackedTypedStep, capturing type parameters.
     /// This is called at workflow construction time when types are known.
@@ -130,14 +118,13 @@ module PackedTypedStep =
     let rec pack<'i, 'o> (typedStep: TypedWorkflowStep<'i, 'o>) : PackedTypedStep =
         match typedStep with
         | TypedWorkflowStep.Step (durableId, name, execute) ->
-            let (inProcessExec, durableFactory) = createExecuteFuncs execute
+            let inProcessExec = createInProcessExec execute
             {
                 DurableId = durableId
                 Name = name
                 Kind = Regular
                 OutputType = typeof<'o>
                 ExecuteInProcess = inProcessExec
-                CreateDurableExecutor = fun stepIndex -> durableFactory stepIndex durableId
                 ActivityInfo = Some (durableId, fun input ->
                     let ctx = WorkflowContext.create()
                     task {
@@ -155,22 +142,12 @@ module PackedTypedStep =
                 let! result = router typedInput ctx
                 return result :> obj
             }
-            let durableExecFactory = fun (stepIndex: int) ->
-                let wrappedFn = Func<obj, Task<obj>>(fun input ->
-                    let ctx = WorkflowContext.create()
-                    task {
-                        let typedInput = input :?> 'i
-                        let! result = router typedInput ctx
-                        return result :> obj
-                    })
-                Interop.DurableExecutorFactory.CreateStepExecutor(durableId, stepIndex, wrappedFn)
             {
                 DurableId = durableId
                 Name = "Route"
                 Kind = Regular
                 OutputType = typeof<'o>
                 ExecuteInProcess = inProcessExec
-                CreateDurableExecutor = durableExecFactory
                 ActivityInfo = Some (durableId, fun input ->
                     let ctx = WorkflowContext.create()
                     task {
@@ -203,42 +180,26 @@ module PackedTypedStep =
                     |> Task.WhenAll
                 return (results |> Array.toList) :> obj
             }
-            let durableExecFactory = fun (stepIndex: int) ->
-                let branchFns =
-                    branchExecs
-                    |> List.map (fun (_, exec) ->
-                        Func<obj, Task<obj>>(fun input ->
-                            let ctx = WorkflowContext.create()
-                            exec input ctx))
-                    |> ResizeArray
-                Interop.DurableExecutorFactory.CreateParallelExecutor(parallelId, stepIndex, branchFns)
             {
                 DurableId = parallelId
                 Name = "Parallel"
                 Kind = Regular
                 OutputType = typeof<'o>
                 ExecuteInProcess = inProcessExec
-                CreateDurableExecutor = durableExecFactory
                 ActivityInfo = None  // Parallel doesn't register as a single activity
                 InnerStep = None
                 FallbackStep = None
             }
 
         | TypedWorkflowStep.AwaitEvent (durableId, eventName) ->
-            // Type parameter 'o is the event type - capture it at pack time!
-            // This eliminates the need for reflection at execution time.
             let inProcessExec = fun (_: obj) (_: WorkflowContext) ->
                 Task.FromException<obj>(exn $"AwaitEvent '{durableId}' requires durable runtime. Use Workflow.Durable.run instead of Workflow.InProcess.run.")
-            let durableExecFactory = fun (stepIndex: int) ->
-                // Call the generic method with 'o captured at pack time - NO REFLECTION!
-                Interop.DurableExecutorFactory.CreateAwaitEventExecutor<'o>(durableId, eventName, stepIndex)
             {
                 DurableId = durableId
                 Name = $"AwaitEvent({eventName})"
                 Kind = DurableAwaitEvent eventName
                 OutputType = typeof<'o>
                 ExecuteInProcess = inProcessExec
-                CreateDurableExecutor = durableExecFactory
                 ActivityInfo = None  // AwaitEvent is not an activity
                 InnerStep = None
                 FallbackStep = None
@@ -247,15 +208,12 @@ module PackedTypedStep =
         | TypedWorkflowStep.Delay (durableId, duration) ->
             let inProcessExec = fun (_: obj) (_: WorkflowContext) ->
                 Task.FromException<obj>(exn $"Delay ({duration}) requires durable runtime. Use Workflow.Durable.run instead of Workflow.InProcess.run.")
-            let durableExecFactory = fun (stepIndex: int) ->
-                Interop.DurableExecutorFactory.CreateDelayExecutor(durableId, duration, stepIndex)
             {
                 DurableId = durableId
                 Name = $"Delay({duration})"
                 Kind = DurableDelay duration
                 OutputType = typeof<'o>
                 ExecuteInProcess = inProcessExec
-                CreateDurableExecutor = durableExecFactory
                 ActivityInfo = None  // Delay is not an activity
                 InnerStep = None
                 FallbackStep = None
@@ -272,18 +230,12 @@ module PackedTypedStep =
                             return! retry (attempt + 1)
                     }
                 retry 0
-            let durableExecFactory = fun (stepIndex: int) ->
-                let innerFunc = Func<obj, Task<obj>>(fun input ->
-                    let ctx = WorkflowContext.create()
-                    innerPacked.ExecuteInProcess input ctx)
-                Interop.DurableExecutorFactory.CreateRetryExecutor($"Retry_{stepIndex}", maxRetries, stepIndex, innerFunc)
             {
                 DurableId = $"WithRetry_{innerPacked.DurableId}"
                 Name = $"Retry({maxRetries})"
                 Kind = Resilience (Retry maxRetries)
                 OutputType = typeof<'o>
                 ExecuteInProcess = inProcessExec
-                CreateDurableExecutor = durableExecFactory
                 ActivityInfo = innerPacked.ActivityInfo  // Inner step's activity
                 InnerStep = Some innerPacked
                 FallbackStep = None
@@ -301,18 +253,12 @@ module PackedTypedStep =
                     else
                         return! execution
                 }
-            let durableExecFactory = fun (stepIndex: int) ->
-                let innerFunc = Func<obj, Task<obj>>(fun input ->
-                    let ctx = WorkflowContext.create()
-                    innerPacked.ExecuteInProcess input ctx)
-                Interop.DurableExecutorFactory.CreateTimeoutExecutor($"Timeout_{stepIndex}", timeout, stepIndex, innerFunc)
             {
                 DurableId = $"WithTimeout_{innerPacked.DurableId}"
                 Name = $"Timeout({timeout})"
                 Kind = Resilience (Timeout timeout)
                 OutputType = typeof<'o>
                 ExecuteInProcess = inProcessExec
-                CreateDurableExecutor = durableExecFactory
                 ActivityInfo = innerPacked.ActivityInfo  // Inner step's activity
                 InnerStep = Some innerPacked
                 FallbackStep = None
@@ -328,21 +274,12 @@ module PackedTypedStep =
                     with _ ->
                         return! fallbackPacked.ExecuteInProcess input ctx
                 }
-            let durableExecFactory = fun (stepIndex: int) ->
-                let innerFunc = Func<obj, Task<obj>>(fun input ->
-                    let ctx = WorkflowContext.create()
-                    innerPacked.ExecuteInProcess input ctx)
-                let fallbackFunc = Func<obj, Task<obj>>(fun input ->
-                    let ctx = WorkflowContext.create()
-                    fallbackPacked.ExecuteInProcess input ctx)
-                Interop.DurableExecutorFactory.CreateFallbackExecutor($"Fallback_{stepIndex}", fallbackId, stepIndex, innerFunc, fallbackFunc)
             {
                 DurableId = $"WithFallback_{innerPacked.DurableId}"
                 Name = $"Fallback({fallbackId})"
                 Kind = Resilience (Fallback fallbackId)
                 OutputType = typeof<'o>
                 ExecuteInProcess = inProcessExec
-                CreateDurableExecutor = durableExecFactory
                 ActivityInfo = innerPacked.ActivityInfo  // Inner step's activity
                 InnerStep = Some innerPacked
                 FallbackStep = Some fallbackPacked
@@ -359,27 +296,12 @@ module PackedTypedStep =
                     // Signal early-exit with structured error payload
                     return EarlyExitSignal error :> obj
             }
-            let durableExecFactory = fun (stepIndex: int) ->
-                let wrappedFn = Func<obj, Task<obj>>(fun input ->
-                    let ctx = WorkflowContext.create()
-                    task {
-                        let typedInput = input :?> 'i
-                        let! result = execute typedInput ctx
-                        match result with
-                        | Ok value ->
-                            return value :> obj
-                        | Error error ->
-                            // Signal early-exit with structured error payload
-                            return EarlyExitSignal error :> obj
-                    })
-                Interop.DurableExecutorFactory.CreateStepExecutor(durableId, stepIndex, wrappedFn)
             {
                 DurableId = durableId
                 Name = name
                 Kind = Regular
                 OutputType = typeof<'o>
                 ExecuteInProcess = inProcessExec
-                CreateDurableExecutor = durableExecFactory
                 ActivityInfo = Some (durableId, fun input ->
                     let ctx = WorkflowContext.create()
                     task {

@@ -54,7 +54,6 @@
   <ItemGroup>
     <ProjectReference Include="..\AgentNet.Workflow.Abstractions\AgentNet.Workflow.Abstractions.csproj" PrivateAssets="All" />
     <ProjectReference Include="..\AgentNet.InProcess.Interop\AgentNet.InProcess.Interop.csproj" PrivateAssets="All" />
-    <ProjectReference Include="..\AgentNet.Durable.Interop\AgentNet.Durable.Interop.csproj" PrivateAssets="All" />
   </ItemGroup>
 
   <ItemGroup>

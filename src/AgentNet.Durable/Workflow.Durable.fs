@@ -12,6 +12,41 @@ module Workflow =
 
     module Durable =
 
+        // ============ DURABLE EXECUTOR CONSTRUCTION ============
+        // Builds IExecutor instances from PackedTypedStep metadata.
+        // This keeps all DurableTask dependencies in the Durable layer,
+        // so AgentNet.InProcess consumers never pull in DurableTask.Abstractions.
+
+        /// Wraps a packed step's ExecuteInProcess as a context-free Func for durable execution.
+        let private toExecFunc (packed: PackedTypedStep) =
+            Func<obj, Task<obj>>(fun input ->
+                packed.ExecuteInProcess input (WorkflowContext.create()))
+
+        /// Converts a PackedTypedStep into a durable IExecutor by matching on its Kind.
+        let rec internal packedStepToDurableExecutor (stepIndex: int) (packed: PackedTypedStep) : IExecutor =
+            match packed.Kind with
+            | Regular ->
+                DurableExecutorFactory.CreateStepExecutor(packed.DurableId, stepIndex, toExecFunc packed)
+
+            | DurableAwaitEvent eventName ->
+                DurableExecutorFactory.CreateAwaitEventExecutor(packed.DurableId, eventName, stepIndex, packed.OutputType)
+
+            | DurableDelay duration ->
+                DurableExecutorFactory.CreateDelayExecutor(packed.DurableId, duration, stepIndex)
+
+            | Resilience (Retry maxRetries) ->
+                let innerFunc = toExecFunc packed.InnerStep.Value
+                DurableExecutorFactory.CreateRetryExecutor(packed.DurableId, maxRetries, stepIndex, innerFunc)
+
+            | Resilience (Timeout timeout) ->
+                let innerFunc = toExecFunc packed.InnerStep.Value
+                DurableExecutorFactory.CreateTimeoutExecutor(packed.DurableId, timeout, stepIndex, innerFunc)
+
+            | Resilience (Fallback fallbackId) ->
+                let innerFunc = toExecFunc packed.InnerStep.Value
+                let fallbackFunc = toExecFunc packed.FallbackStep.Value
+                DurableExecutorFactory.CreateFallbackExecutor(packed.DurableId, fallbackId, stepIndex, innerFunc, fallbackFunc)
+
         // ============ UTILITY FUNCTIONS ============
 
         /// Checks if a workflow contains durable-only operations.
@@ -83,10 +118,8 @@ module Workflow =
                 match packedSteps with
                 | [] -> return failwith "Workflow must have at least one step"
                 | steps ->
-                    // Create durable executors directly from packed steps
-                    // No reflection needed - CreateDurableExecutor was set up at pack time
-                    // with the correct type parameters captured in the closure
-                    let executors = steps |> List.mapi (fun i packed -> packed.CreateDurableExecutor i)
+                    // Create durable executors from packed step metadata
+                    let executors = steps |> List.mapi (fun i packed -> packedStepToDurableExecutor i packed)
 
                     // Execute each step in sequence, passing ctx at execution time
                     let mutable currentInput: obj = box input
@@ -133,7 +166,7 @@ module Workflow =
 
                 | steps ->
                     let executors =
-                        steps |> List.mapi (fun i packed -> packed.CreateDurableExecutor i)
+                        steps |> List.mapi (fun i packed -> packedStepToDurableExecutor i packed)
 
                     return! runSteps (box input) executors
             }
