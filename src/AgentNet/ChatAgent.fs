@@ -3,12 +3,14 @@ namespace AgentNet
 open System.Collections.Generic
 open System.Threading
 open System.Threading.Tasks
+open Microsoft.Extensions.AI
 
 /// Configuration for a chat agent
 type ChatAgentConfig = {
     Name: string option
     Instructions: string
     Tools: ToolDef list
+    ChatOptions: ChatOptions option
 }
 
 /// Role of a participant in a chat conversation
@@ -75,7 +77,7 @@ type ChatAgent with
 
     /// Creates an agent config with the given instructions
     static member create (instructions: string) : ChatAgentConfig =
-        { Name = None; Instructions = instructions; Tools = [] }
+        { Name = None; Instructions = instructions; Tools = []; ChatOptions = None }
 
     /// Sets the agent's name
     static member withName (name: string) (config: ChatAgentConfig) : ChatAgentConfig =
@@ -88,3 +90,7 @@ type ChatAgent with
     /// Adds a list of tools to the agent
     static member withTools (tools: ToolDef list) (config: ChatAgentConfig) : ChatAgentConfig =
         { config with Tools = config.Tools @ tools }
+
+    /// Sets ChatOptions (temperature, top-p, model, etc.) for the agent
+    static member withChatOptions (options: ChatOptions) (config: ChatAgentConfig) : ChatAgentConfig =
+        { config with ChatOptions = Some options }
