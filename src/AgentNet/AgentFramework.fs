@@ -25,39 +25,6 @@ module MAF =
         // The explicit annotation ensures correct overload resolution
         AIFunctionFactory.Create(method = tool.MethodInfo, target = null, options = options)
 
-    /// Wraps an IChatClient to merge default ChatOptions into every call.
-    /// Defaults are the base; per-call options override where present.
-    let private withDefaultOptions (defaults: ChatOptions) (inner: IChatClient) =
-        let mergeOptions (callOptions: ChatOptions) =
-            let merged = defaults.Clone()
-            if callOptions <> null then
-                if callOptions.Temperature.HasValue then merged.Temperature <- callOptions.Temperature
-                if callOptions.TopP.HasValue then merged.TopP <- callOptions.TopP
-                if callOptions.TopK.HasValue then merged.TopK <- callOptions.TopK
-                if callOptions.MaxOutputTokens.HasValue then merged.MaxOutputTokens <- callOptions.MaxOutputTokens
-                if callOptions.FrequencyPenalty.HasValue then merged.FrequencyPenalty <- callOptions.FrequencyPenalty
-                if callOptions.PresencePenalty.HasValue then merged.PresencePenalty <- callOptions.PresencePenalty
-                if callOptions.Seed.HasValue then merged.Seed <- callOptions.Seed
-                if callOptions.ModelId <> null then merged.ModelId <- callOptions.ModelId
-                if callOptions.ResponseFormat <> null then merged.ResponseFormat <- callOptions.ResponseFormat
-                if callOptions.StopSequences <> null && callOptions.StopSequences.Count > 0 then
-                    merged.StopSequences <- ResizeArray(callOptions.StopSequences)
-                for tool in callOptions.Tools do merged.Tools.Add(tool)
-                if callOptions.AdditionalProperties <> null then
-                    if merged.AdditionalProperties = null then
-                        merged.AdditionalProperties <- AdditionalPropertiesDictionary()
-                    for kvp in callOptions.AdditionalProperties do
-                        merged.AdditionalProperties.[kvp.Key] <- kvp.Value
-            merged
-        { new IChatClient with
-            member _.GetResponseAsync(messages, options, ct) =
-                inner.GetResponseAsync(messages, mergeOptions options, ct)
-            member _.GetStreamingResponseAsync(messages, options, ct) =
-                inner.GetStreamingResponseAsync(messages, mergeOptions options, ct)
-            member _.GetService(serviceType, serviceKey) =
-                inner.GetService(serviceType, serviceKey)
-            member _.Dispose() = () }
-
     /// Creates a ChatClientAgent from an AgentNet ChatAgent config
     let createAgent (chatClient: IChatClient) (config: ChatAgentConfig) : AIAgent =
         // Convert tools to AIFunctions and cast to AITool
@@ -67,14 +34,9 @@ module MAF =
             |> ResizeArray
             :> IList<AITool>
 
-        let client =
-            match config.ChatOptions with
-            | Some opts -> withDefaultOptions opts chatClient
-            | None -> chatClient
-
         // Create the agent using the constructor with named parameters
         ChatClientAgent(
-            client,
+            chatClient,
             name = (config.Name |> Option.defaultValue "Agent"),
             instructions = config.Instructions,
             tools = tools) :> AIAgent
@@ -111,16 +73,20 @@ module MAF =
     /// Builds a fully functional ChatAgent from config and chat client
     let build (chatClient: IChatClient) (config: ChatAgentConfig) : ChatAgent =
         let mafAgent = createAgent chatClient config
+        let runOpts =
+            match ChatOptionsHelpers.merge config.ChatOptions null with
+            | null -> null
+            | chatOpts -> ChatClientAgentRunOptions(chatOpts) :> AgentRunOptions
 
         let chat (msg: string) ct = task {
             let! session = mafAgent.CreateSessionAsync(ct)
-            let! response = mafAgent.RunAsync(msg, session, null, ct)
+            let! response = mafAgent.RunAsync(msg, session, runOpts, ct)
             return response.Text
         }
 
         let chatFull (msg: string) ct = task {
             let! session = mafAgent.CreateSessionAsync(ct)
-            let! response = mafAgent.RunAsync(msg, session, null, ct)
+            let! response = mafAgent.RunAsync(msg, session, runOpts, ct)
             let messages : AgentNet.ChatMessage list = [
                 { Role = AgentNet.ChatRole.User; Content = msg }
                 { Role = AgentNet.ChatRole.Assistant; Content = response.Text }
@@ -147,7 +113,7 @@ module MAF =
                                 if innerEnumerator = null then
                                     let! s = mafAgent.CreateSessionAsync(ct)
                                     session <- s
-                                    let stream = mafAgent.RunStreamingAsync(msg, session, null, ct)
+                                    let stream = mafAgent.RunStreamingAsync(msg, session, runOpts, ct)
                                     innerEnumerator <- stream.GetAsyncEnumerator(ct)
 
                                 // Drain buffered events first
