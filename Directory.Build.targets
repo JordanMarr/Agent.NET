@@ -7,9 +7,9 @@
   <!--  These packages must always be version-aligned.           -->
   <!-- ========================================================= -->
   <ItemGroup>
-    <PackageReference Update="Microsoft.Agents.AI" Version="1.0.0-rc4" />
-    <PackageReference Update="Microsoft.Agents.AI.OpenAI" Version="1.0.0-rc4" />
-    <PackageReference Update="Microsoft.Agents.AI.Workflows" Version="1.0.0-rc4" />
+    <PackageReference Update="Microsoft.Agents.AI" Version="1.3.0" />
+    <PackageReference Update="Microsoft.Agents.AI.OpenAI" Version="1.3.0" />
+    <PackageReference Update="Microsoft.Agents.AI.Workflows" Version="1.3.0" />
   </ItemGroup>
 
   <!-- ========================================================= -->
@@ -17,10 +17,10 @@
   <!--  These MUST match the version MAF was compiled against.   -->
   <!-- ========================================================= -->
   <ItemGroup>
-    <PackageReference Update="Microsoft.Extensions.AI" Version="10.4.0" />
-    <PackageReference Update="Microsoft.Extensions.AI.Core" Version="10.4.0" />
-    <PackageReference Update="Microsoft.Extensions.AI.OpenAI" Version="10.4.0" />
-    <PackageReference Update="Microsoft.Extensions.AI.Abstractions" Version="10.4.0" />
+    <PackageReference Update="Microsoft.Extensions.AI" Version="10.5.0" />
+    <PackageReference Update="Microsoft.Extensions.AI.Core" Version="10.5.0" />
+    <PackageReference Update="Microsoft.Extensions.AI.OpenAI" Version="10.5.0" />
+    <PackageReference Update="Microsoft.Extensions.AI.Abstractions" Version="10.5.0" />
   </ItemGroup>
 
   <!-- ========================================================= -->
@@ -29,7 +29,7 @@
   <!--  These must be aligned to avoid runtime type mismatches.  -->
   <!-- ========================================================= -->
   <ItemGroup>
-    <PackageReference Update="Microsoft.DurableTask.Abstractions" Version="1.22.0" />
+    <PackageReference Update="Microsoft.DurableTask.Abstractions" Version="1.24.0" />
   </ItemGroup>
 
 </Project>
