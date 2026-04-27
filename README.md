@@ -701,6 +701,7 @@ let! result = Workflow.InProcess.tryRun documentWorkflow
 | `Tool.create` | Creates a tool from an F# function using a quotation. |
 | `Tool.createWithDocs` | Creates a tool and extracts XML documentation from the quoted function. |
 | `Tool.describe` | Overrides or adds a description for a tool. |
+| `Tool.inject` | Partially applies the leftmost parameter (a dependency) of a tool's function, returning a new `ToolDef` with one fewer parameter. |
 
 
 ### Agent Functions
