@@ -184,6 +184,43 @@ let searchTool =
     |> Tool.describe "Searches the knowledge base for relevant documents"
 ```
 
+### Tools: Dependency Injection (`Tool.inject`)
+
+Most real-world tool functions need a dependency — a database, an HTTP client, a domain service. But the agent shouldn't see (or be able to fill in) that dependency: it's a host concern, not a model concern.
+
+`Tool.inject` partially applies the **leftmost parameter** of a tool's underlying function with a value you supply, and returns a new `ToolDef` whose metadata and method signature are exactly one parameter shorter. The captured dependency is forwarded to the original function at invoke time.
+
+```fsharp
+/// <summary>Looks up a user by id</summary>
+/// <param name="db">The database connection</param>
+/// <param name="userId">The user's id</param>
+let lookupUser (db: IDb) (userId: int) : string =
+    db.GetUserName userId
+
+let lookupUserTool =
+    Tool.createWithDocs <@ lookupUser @>
+    |> Tool.inject realDb
+// The agent now sees a 1-parameter tool: { Name = "lookupUser"; Parameters = [userId: int] }
+// At invoke time, `realDb` is passed automatically; the model only supplies `userId`.
+```
+
+**Why `Tool.inject`?**
+- **Hide infrastructure from the model** — the LLM only sees parameters it can meaningfully reason about
+- **Per-request dependencies** — capture a tenant-scoped service, a request-scoped logger, etc. by injecting a fresh value each time you build the agent
+- **No wrapper boilerplate** — you don't need to hand-write a closure-shaped tool function just to thread a dependency through
+- **XML metadata still works** — descriptions on the remaining parameters survive the injection
+
+`Tool.inject` is composable in pipelines and works whether the dependency is the only parameter or one of many. You can also inject into functions whose remaining input is `unit`:
+
+```fsharp
+let nowFromClock (clock: IClock) () : string = clock.Now()
+
+let nowTool =
+    Tool.create <@ nowFromClock @>
+    |> Tool.inject systemClock
+    |> Tool.describe "Returns the current time"
+```
+
 ### ChatAgent: Pipeline-Style Configuration
 
 Build agents using a clean pipeline:
