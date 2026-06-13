@@ -21,8 +21,9 @@ module Workflow =
     // ============ MAF COMPILATION ============
 
     /// Converts a PackedTypedStep to a MAF Executor.
+    /// `makeCtx` produces the WorkflowContext seeded for this run (cancellation token + DI services).
     /// The stepIndex is used to ensure unique executor IDs within a workflow.
-    let private packedStepToMAFExecutor (stepIndex: int) (packed: PackedTypedStep) : MAFExecutor =
+    let private packedStepToMAFExecutor (makeCtx: unit -> WorkflowContext) (stepIndex: int) (packed: PackedTypedStep) : MAFExecutor =
         match packed.Kind with
         | DurableAwaitEvent eventName ->
             failwith $"AwaitEvent '{eventName}' cannot be compiled for in-process execution. Use Workflow.Durable.run instead."
@@ -32,32 +33,18 @@ module Workflow =
             // All regular steps and resilience wrappers can use the ExecuteInProcess function
             let executorId = $"{packed.DurableId}_{stepIndex}"
             let fn = Func<obj, Task<obj>>(fun input ->
-                let ctx = WorkflowContext.create()
+                let ctx = makeCtx ()
                 packed.ExecuteInProcess input ctx)
             Interop.ExecutorFactory.CreateStep(executorId, fn, packed.OutputType)
 
-    /// Like packedStepToMAFExecutor but creates the WorkflowContext with the given CancellationToken.
-    let private packedStepToMAFExecutorWithCT (ct: System.Threading.CancellationToken) (stepIndex: int) (packed: PackedTypedStep) : MAFExecutor =
-        match packed.Kind with
-        | DurableAwaitEvent eventName ->
-            failwith $"AwaitEvent '{eventName}' cannot be compiled for in-process execution. Use Workflow.Durable.run instead."
-        | DurableDelay duration ->
-            failwith $"Delay ({duration}) cannot be compiled for in-process execution. Use Workflow.Durable.run instead."
-        | Regular | Resilience _ ->
-            let executorId = $"{packed.DurableId}_{stepIndex}"
-            let fn = Func<obj, Task<obj>>(fun input ->
-                let ctx = WorkflowContext.create() |> WorkflowContext.withCancellation ct
-                packed.ExecuteInProcess input ctx)
-            Interop.ExecutorFactory.CreateStep(executorId, fn, packed.OutputType)
-
-    /// Like toMAF but seeds each step's WorkflowContext with the given CancellationToken.
-    let internal toMAFWithCancellation<'input, 'output, 'error> (ct: System.Threading.CancellationToken) (workflow: WorkflowDef<'input, 'output, 'error>) : MAFWorkflow =
+    /// Core compilation: builds a MAF Workflow from packed steps via WorkflowBuilder, seeding each
+    /// step's WorkflowContext with `makeCtx` (cancellation token + DI services).
+    let internal toMAFCore<'input, 'output, 'error> (makeCtx: unit -> WorkflowContext) (workflow: WorkflowDef<'input, 'output, 'error>) : MAFWorkflow =
         let name = workflow.Name |> Option.defaultValue "Workflow"
-        let packedSteps = workflow.TypedSteps
-        match packedSteps with
+        match workflow.TypedSteps with
         | [] -> failwith "Workflow must have at least one step"
         | steps ->
-            let executors = steps |> List.mapi (packedStepToMAFExecutorWithCT ct)
+            let executors = steps |> List.mapi (packedStepToMAFExecutor makeCtx)
             match executors with
             | [] -> failwith "Workflow must have at least one step"
             | firstExecutor :: restExecutors ->
@@ -68,37 +55,16 @@ module Workflow =
                     prev <- exec
                 builder <- builder.WithOutputFrom(prev)
                 builder.Build()
+
+    /// Like toMAF but seeds each step's WorkflowContext with the given CancellationToken.
+    let internal toMAFWithCancellation<'input, 'output, 'error> (ct: System.Threading.CancellationToken) (workflow: WorkflowDef<'input, 'output, 'error>) : MAFWorkflow =
+        toMAFCore (fun () -> WorkflowContext.create() |> WorkflowContext.withCancellation ct) workflow
 
     /// Compiles a workflow definition to MAF Workflow using WorkflowBuilder.
     /// Returns a Workflow that can be executed with InProcessExecution.RunAsync.
     /// If no name is set, uses "Workflow" as the default name.
     let internal toMAF<'input, 'output, 'error> (workflow: WorkflowDef<'input, 'output, 'error>) : MAFWorkflow =
-        let name = workflow.Name |> Option.defaultValue "Workflow"
-        // Use packed steps directly (no compilation to erased types)
-        let packedSteps = workflow.TypedSteps
-        match packedSteps with
-        | [] -> failwith "Workflow must have at least one step"
-        | steps ->
-            // Create executors for all packed steps with unique indices
-            let executors = steps |> List.mapi packedStepToMAFExecutor
-
-            match executors with
-            | [] -> failwith "Workflow must have at least one step"
-            | firstExecutor :: restExecutors ->
-                // Build workflow using MAFWorkflowBuilder
-                let mutable builder = MAFWorkflowBuilder(firstExecutor).WithName(name)
-
-                // Add edges between consecutive executors
-                let mutable prev = firstExecutor
-                for exec in restExecutors do
-                    builder <- builder.AddEdge(prev, exec)
-                    prev <- exec
-
-                // Mark the last executor as output
-                builder <- builder.WithOutputFrom(prev)
-
-                // Build and return the workflow
-                builder.Build()
+        toMAFCore (fun () -> WorkflowContext.create()) workflow
 
     /// In-process workflow execution using MAF InProcessExecution.
     /// Use this for testing, simple scenarios, or when you don't need durable suspension.
@@ -152,20 +118,19 @@ module Workflow =
                 else
                     data :?> 'output
 
-        /// Runs a workflow via MAF InProcessExecution.
-        /// The workflow is compiled to MAF format and executed in-process.
-        /// DO NOT CHANGE THIS FUNCTION UNLESS EXPLICIT INSTRUCTIONS ARE GIVEN.
-        let run<'input, 'output, 'error> (input: 'input) (workflow: WorkflowDef<'input, 'output, 'error>) : Task<'output> =
+        /// Core in-process run: compiles via MAF and executes with Lockstep, seeding each step's
+        /// WorkflowContext via `makeCtx`. `ct` is also passed to MAF's RunAsync.
+        let private runCore<'input, 'output, 'error> (makeCtx: unit -> WorkflowContext) (ct: System.Threading.CancellationToken) (input: 'input) (workflow: WorkflowDef<'input, 'output, 'error>) : Task<'output> =
             task {
                 // Wrap steps to capture exceptions before MAF swallows them
                 let captured = ref Unchecked.defaultof<ExceptionDispatchInfo>
                 let wrappedWorkflow = wrapStepsWithExceptionCapture captured workflow
 
-                // Compile to MAF workflow
-                let mafWorkflow = toMAF wrappedWorkflow
+                // Compile to MAF workflow with the seeded context
+                let mafWorkflow = toMAFCore makeCtx wrappedWorkflow
 
                 // Run via Lockstep InProcessExecution (runs all SuperSteps synchronously)
-                let! run = MAFInProcessExecution.Lockstep.RunAsync(mafWorkflow, input :> obj, null, System.Threading.CancellationToken.None)
+                let! run = MAFInProcessExecution.Lockstep.RunAsync(mafWorkflow, input :> obj, null, ct)
 
                 // Re-throw captured exception if MAF swallowed it
                 let edi = System.Threading.Volatile.Read(&captured.contents)
@@ -185,33 +150,26 @@ module Workflow =
                 | None -> return failwith "Workflow did not produce output. No WorkflowOutputEvent found."
             }
 
+        /// Runs a workflow via MAF InProcessExecution.
+        /// The workflow is compiled to MAF format and executed in-process.
+        let run<'input, 'output, 'error> (input: 'input) (workflow: WorkflowDef<'input, 'output, 'error>) : Task<'output> =
+            runCore (fun () -> WorkflowContext.create()) System.Threading.CancellationToken.None input workflow
+
         /// Runs a workflow with a CancellationToken that flows into every step's WorkflowContext.
         /// Use this to enable cooperative cancellation from an external source (e.g., user-triggered, host shutdown).
         /// Steps and Polly policies receive the token via ctx.CancellationToken.
         let runWithCancellation<'input, 'output, 'error> (ct: System.Threading.CancellationToken) (input: 'input) (workflow: WorkflowDef<'input, 'output, 'error>) : Task<'output> =
-            task {
-                let captured = ref Unchecked.defaultof<ExceptionDispatchInfo>
-                let wrappedWorkflow = wrapStepsWithExceptionCapture captured workflow
+            runCore (fun () -> WorkflowContext.create() |> WorkflowContext.withCancellation ct) ct input workflow
 
-                let mafWorkflow = toMAFWithCancellation ct wrappedWorkflow
+        /// Runs a workflow with an IServiceProvider that flows into every step's WorkflowContext.
+        /// Steps resolve dependencies at execution time via ctx.Services (see WorkflowContext.getRequiredService).
+        let runWithServices<'input, 'output, 'error> (services: IServiceProvider) (input: 'input) (workflow: WorkflowDef<'input, 'output, 'error>) : Task<'output> =
+            runCore (fun () -> WorkflowContext.create() |> WorkflowContext.withServices services) System.Threading.CancellationToken.None input workflow
 
-                let! run = MAFInProcessExecution.Lockstep.RunAsync(mafWorkflow, input :> obj, null, ct)
-
-                let edi = System.Threading.Volatile.Read(&captured.contents)
-                if not (isNull edi) then
-                    edi.Throw()
-
-                let mutable lastResult: obj option = None
-                for evt in run.NewEvents do
-                    match evt with
-                    | :? MAFWorkflowOutputEvent as output ->
-                        lastResult <- Some output.Data
-                    | _ -> ()
-
-                match lastResult with
-                | Some data -> return convertToOutput<'output> data
-                | None -> return failwith "Workflow did not produce output. No WorkflowOutputEvent found."
-            }
+        /// Runs a workflow seeding every step's WorkflowContext with both a CancellationToken and an
+        /// IServiceProvider. This is the most general in-process entry point.
+        let runWith<'input, 'output, 'error> (services: IServiceProvider) (ct: System.Threading.CancellationToken) (input: 'input) (workflow: WorkflowDef<'input, 'output, 'error>) : Task<'output> =
+            runCore (fun () -> WorkflowContext.create() |> WorkflowContext.withCancellation ct |> WorkflowContext.withServices services) ct input workflow
 
         // AGENTS: DO NOT CHANGE THIS FUNCTION UNLESS EXPLICIT INSTRUCTIONS ARE GIVEN TO DO SO.
         /// Runs a workflow via MAF InProcessExecution, catching EarlyExitException.
@@ -255,9 +213,10 @@ module Workflow =
             }
 
         /// Converts a workflow to an executor (enables workflow composition).
-        /// Uses MAF InProcessExecution to run the workflow.
+        /// Uses MAF InProcessExecution to run the workflow, propagating the caller's
+        /// DI services and CancellationToken into the nested workflow's steps.
         let toExecutor<'input, 'output, 'error> (name: string) (workflow: WorkflowDef<'input, 'output, 'error>) : Executor<'input, 'output> =
             {
                 Name = name
-                Execute = fun input _ -> run input workflow
+                Execute = fun input ctx -> runWith ctx.Services ctx.CancellationToken input workflow
             }

@@ -11,19 +11,46 @@ type WorkflowContext = {
     State: Map<string, obj>
     /// Cancellation token for cooperative cancellation (e.g., from Polly timeout/hedging)
     CancellationToken: System.Threading.CancellationToken
+    /// Service provider for resolving step dependencies (DI). Supplied by the run/resume host;
+    /// defaults to an empty provider. Steps resolve deps at execution time rather than capturing
+    /// them in closures, so the workflow definition stays free of captured deps (required for
+    /// cross-process durable resume). See ARCHITECTURAL_INVARIANTS.md §5.
+    Services: IServiceProvider
 }
 
 module WorkflowContext =
+    /// An empty service provider used when the host supplies no DI container.
+    let private emptyServices =
+        { new IServiceProvider with
+            member _.GetService(_serviceType: Type) = null }
+
     /// Creates a new empty workflow context
     let create () = {
         RunId = Guid.NewGuid()
         State = Map.empty
         CancellationToken = System.Threading.CancellationToken.None
+        Services = emptyServices
     }
 
     /// Creates a workflow context with a specific cancellation token
     let withCancellation (ct: System.Threading.CancellationToken) (ctx: WorkflowContext) =
         { ctx with CancellationToken = ct }
+
+    /// Sets the service provider used to resolve step dependencies.
+    let withServices (services: IServiceProvider) (ctx: WorkflowContext) =
+        { ctx with Services = services }
+
+    /// Resolves a service of type 'T from the context, or None if not registered.
+    let tryGetService<'T> (ctx: WorkflowContext) : 'T option =
+        match ctx.Services.GetService(typeof<'T>) with
+        | null -> None
+        | svc -> Some (svc :?> 'T)
+
+    /// Resolves a required service of type 'T from the context, throwing if not registered.
+    let getRequiredService<'T> (ctx: WorkflowContext) : 'T =
+        match ctx.Services.GetService(typeof<'T>) with
+        | null -> failwithf "No service of type '%s' is registered in WorkflowContext.Services." typeof<'T>.FullName
+        | svc -> svc :?> 'T
 
     /// Gets a typed value from the context state
     let tryGet<'T> (key: string) (ctx: WorkflowContext) : 'T option =

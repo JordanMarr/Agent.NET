@@ -167,9 +167,16 @@ Non-streaming `RunAsync` returns a `Run` whose events can be inspected for `Work
       DF/`TaskOrchestrationContext` coupling. (Note: it has *pre-existing* drift — shows a 2-param
       `WorkflowState` vs the code's 3-param `'error` phantom — out of scope for this rework.)
 
-### Phase 3 — DI plumbing
-- [ ] Add `Services: IServiceProvider` to `WorkflowContext`; default to an empty provider in `create()`.
-- [ ] Thread the host's provider into the in-process runner and the new durable run/resume helpers.
+### Phase 3 — DI plumbing ✅ done 2026-06-13
+- [x] Added `Services: IServiceProvider` to `WorkflowContext` (`Executor.fs`), empty-provider default in
+      `create()`, plus `withServices` / `tryGetService<'T>` / `getRequiredService<'T>` helpers.
+- [x] Threaded the provider into the in-process runner: collapsed the duplicated executor/`toMAF`
+      builders onto a single context-factory core (`toMAFCore` / `runCore`), added `runWithServices` and
+      `runWith` (services + ct), and made `toExecutor` propagate the caller's `Services`+`CancellationToken`
+      into nested workflows. Durable run/resume helpers are Phase 5 (don't exist yet).
+- [x] New `WorkflowDiTests.fs` (4 tests) proves: injection via `runWithServices`, empty-provider default
+      throws on required service, `tryGetService` → None when unregistered, and service propagation into a
+      composed nested workflow. Full suite 126/126 green; existing 122 unaffected by the refactor.
 
 ### Phase 4 — Unify compilation onto MAF
 - [ ] Teach `toMAF` to emit a `RequestPort` node for `awaitEvent` (remove the throw at `Workflow.fs:195`
@@ -218,3 +225,4 @@ Non-streaming `RunAsync` returns a `Run` whose events can be inspected for `Work
 | 2026-06-12 | 0 | Plan drafted. Direction confirmed: MAF-native, drop DF. Design decisions §3 locked. |
 | 2026-06-12 | 2 | Doc cleanup done **before** Phase 1 (to clear contradictions early). `CLAUDE.md` guardrails stripped; `ARCHITECTURAL_INVARIANTS.md` rewritten; `DESIGN_CE_TYPE_THREADING.md` reviewed & preserved. No production code touched. Next up: Phase 1 (MAF 1.3 → 1.10 upgrade + re-validate 🔎 APIs). |
 | 2026-06-13 | 1 | MAF 1.3.0→1.10.0, M.E.AI 10.5.0→10.6.0 (`Directory.Build.targets` only). Restore clean (no NU conflicts), build 0 errors across net8/9/10, 122/122 tests pass. Re-validated 1.10 checkpoint/RequestPort/Resume API — survived & cleaner (§4 resolved). Only version numbers changed; no source touched. Next up: Phase 3 (add `WorkflowContext.Services`). |
+| 2026-06-13 | 3 | DI plumbing. `WorkflowContext.Services` + helpers (`Executor.fs`); in-process runner refactored to a single context-factory core + `runWithServices`/`runWith`; `toExecutor` now propagates services+ct to nested workflows. New `WorkflowDiTests.fs` (4 tests). 126/126 green. Files: `src/AgentNet/Executor.fs`, `src/AgentNet.InProcess/Workflow.InProcess.fs`, `src/AgentNet.Tests/*`. Next up: Phase 4 (emit RequestPort for awaitEvent; migrate DSL to core). |

@@ -12,6 +12,7 @@
 		<Compile Include="DurableIdTests.fs" />
 		<Compile Include="ToolTests.fs" />
 		<Compile Include="SequentialWorkflowTests.fs" />
+		<Compile Include="WorkflowDiTests.fs" />
 		<Compile Include="RoutingWorkflowTests.fs" />
 		<Compile Include="ParallelWorkflowTests.fs" />
 		<Compile Include="ResultWorkflowTests.fs" />
