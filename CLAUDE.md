@@ -1,18 +1,18 @@
-IMPORTANT — ARCHITECTURAL GUARDRAILS
+ARCHITECTURE
 
-Do NOT modify the following under ANY circumstances:
-- Workflow.InProcess.run
-- Workflow.Durable.run
-- toMAF
-- MAFInProcessExecution.RunAsync
-- Any code that executes steps directly in a loop
-- Any code that bypasses MAF
+All workflow execution goes through Microsoft Agent Framework (MAF). A workflow is compiled to a MAF
+WorkflowBuilder graph via `toMAF` and executed by MAF. Building a workflow is a pure description — steps
+do not run at construction time. See `ARCHITECTURAL_INVARIANTS.md` for the invariants and
+`DESIGN_CE_TYPE_THREADING.md` for the CE type-threading spec (the SRTP / phantom-type machinery — do not
+break it).
 
-These functions are architecturally correct and MUST remain unchanged.
-If tests fail, update the tests — NOT the implementation.
-If you believe a function is incorrect, STOP and ask me before changing it.
-Never reintroduce the direct interpreter (looping over packed steps).
-All workflow execution MUST go through MAF.
+DURABLE REWORK IN PROGRESS (durable-rework branch)
+
+`AgentNet.Durable` is being reworked from its bespoke Azure Durable Functions runtime to MAF-native
+checkpoint/resume durability (dropping the `Microsoft.DurableTask` dependency). **`DURABLE_REWORK_PLAN.md`
+is the source of truth for this effort — read it before touching durable execution.** Earlier "do not
+modify" guardrails on `Workflow.Durable.run` / `toMAF` / the durable runtime were stale and have been
+removed; that code is being deliberately replaced.
 
 VERSION MANAGEMENT
 
