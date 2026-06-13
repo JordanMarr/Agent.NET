@@ -1,70 +1,15 @@
 // ============================================================================
-// WARNING: Declarative Layer Only
+// MIGRATED TO CORE
 // ----------------------------------------------------------------------------
-// This file defines WorkflowBuilder custom operations. 
-// These operations must be 100% declarative. 
-// They may NOT:
-//   - call DurableTask APIs
-//   - capture TaskOrchestrationContext
-//   - construct lambdas that will run at execution time
-//   - create or await Tasks
-//   - perform I/O or side effects
+// The `awaitEvent` / `delayFor` workflow custom operations and the `eventOf`
+// type-witness helper used to live here. As of the MAF-native durable rework
+// they have moved into core (AgentNet.WorkflowBuilder / AgentNet.WorkflowCE) so
+// they are available in both in-process and durable execution modes.
+// See DURABLE_REWORK_PLAN.md (decision #6) and ARCHITECTURAL_INVARIANTS.md §4.
 //
-// All durable primitives MUST be implemented in the execution layer
-// (toMAFExecutor), NOT here.
+// This module is intentionally left empty (kept so `open AgentNet.Durable`
+// continues to resolve). It can be removed entirely in the Phase 6 cleanup.
 // ============================================================================
 
-/// Durable workflow extensions for WorkflowBuilder.
-/// These operations require DurableTask runtime - will fail with runInProcess.
-/// Users must `open AgentNet.Durable` to access these extensions.
 [<AutoOpen>]
 module AgentNet.Durable.WorkflowBuilderExtensions
-
-open System
-open AgentNet
-
-/// Type witness helper for awaitEvent.
-/// Usage: awaitEvent "ApprovalEvent" eventOf<ApprovalDecision>
-let eventOf<'T> : 'T = Unchecked.defaultof<'T>
-
-type WorkflowBuilder with
-    /// Waits for an external event with the given name and expected type.
-    /// The workflow is checkpointed and suspended until the event arrives.
-    /// The received event becomes the input for the next step.
-    /// Usage: awaitEvent "ApprovalEvent" eventOf<ApprovalDecision>
-    /// This operation requires DurableTask runtime - will fail with runInProcess.
-    /// Does NOT change the error type.
-    ///
-    /// EVENT BOUNDARY INVARIANT (per DESIGN_CE_TYPE_THREADING.md):
-    /// Input state MUST be WorkflowState<'input, unit, 'error>.
-    /// This enforces that all data needed after the event must be stored in context
-    /// before the event boundary. The step before awaitEvent must return unit.
-    [<CustomOperation("awaitEvent")>]
-    member _.AwaitEvent(state: WorkflowState<'input, unit, 'error>, eventName: string, _witness: 'event) : WorkflowState<'input, 'event, 'error> =
-        // Early validation - fail fast at workflow construction time
-        if String.IsNullOrWhiteSpace(eventName) then
-            failwith "awaitEvent: event name cannot be null or empty"
-
-        let eventType = typeof<'event>
-        if not (eventType.IsPublic || eventType.IsNestedPublic) then
-            failwith $"awaitEvent: event type '{eventType.FullName}' must be public"
-
-        if eventType.IsAbstract then
-            failwith $"awaitEvent: event type '{eventType.FullName}' cannot be abstract"
-
-        let durableId = $"AwaitEvent_{eventName}_{eventType.Name}"
-
-        // Create a typed step and pack it
-        let typedStep : TypedWorkflowStep<unit, 'event> = TypedWorkflowStep.AwaitEvent(durableId, eventName)
-        { Name = state.Name; PackedSteps = state.PackedSteps @ [PackedTypedStep.pack typedStep] }
-
-    /// Delays the workflow for the specified duration.
-    /// The workflow is checkpointed and suspended during the delay.
-    /// This operation requires DurableTask runtime - will fail with runInProcess.
-    /// Does NOT change the error type.
-    [<CustomOperation("delayFor")>]
-    member _.DelayFor(state: WorkflowState<'input, 'output, 'error>, duration: TimeSpan) : WorkflowState<'input, 'output, 'error> =
-        let durableId = $"Delay_{int duration.TotalMilliseconds}ms"
-        // Create a typed step and pack it
-        let typedStep : TypedWorkflowStep<'output, 'output> = TypedWorkflowStep.Delay(durableId, duration)
-        { Name = state.Name; PackedSteps = state.PackedSteps @ [PackedTypedStep.pack typedStep] }

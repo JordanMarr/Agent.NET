@@ -319,6 +319,45 @@ type WorkflowBuilder() =
             }
             { Name = state.Name; PackedSteps = allButLast @ [wrappedPacked] }
 
+    // ============ DURABLE / SUSPENSION OPERATIONS ============
+    // These describe suspension points. They are declarative only: they create packed steps and
+    // perform NO I/O at construction time. awaitEvent compiles to a MAF RequestPort; delayFor to a
+    // delay executor. (Migrated from AgentNet.Durable into core so they are available in both
+    // execution modes — see ARCHITECTURAL_INVARIANTS.md §4 and DURABLE_REWORK_PLAN.md.)
+
+    /// Waits for an external event with the given name and expected type.
+    /// The received event becomes the input for the next step.
+    /// Usage: awaitEvent "ApprovalEvent" eventOf<ApprovalDecision>
+    /// Does NOT change the error type.
+    ///
+    /// EVENT BOUNDARY INVARIANT: input state MUST be WorkflowState<'input, unit, 'error>, so all data
+    /// needed after the event must flow through the graph (or context) before the boundary — the step
+    /// before awaitEvent must return unit.
+    [<CustomOperation("awaitEvent")>]
+    member _.AwaitEvent(state: WorkflowState<'input, unit, 'error>, eventName: string, _witness: 'event) : WorkflowState<'input, 'event, 'error> =
+        // Early validation - fail fast at workflow construction time
+        if String.IsNullOrWhiteSpace(eventName) then
+            failwith "awaitEvent: event name cannot be null or empty"
+
+        let eventType = typeof<'event>
+        if not (eventType.IsPublic || eventType.IsNestedPublic) then
+            failwith $"awaitEvent: event type '{eventType.FullName}' must be public"
+
+        if eventType.IsAbstract then
+            failwith $"awaitEvent: event type '{eventType.FullName}' cannot be abstract"
+
+        let durableId = $"AwaitEvent_{eventName}_{eventType.Name}"
+        let typedStep : TypedWorkflowStep<unit, 'event> = TypedWorkflowStep.AwaitEvent(durableId, eventName)
+        { Name = state.Name; PackedSteps = state.PackedSteps @ [PackedTypedStep.pack typedStep] }
+
+    /// Delays the workflow for the specified duration. In-process this is a cooperative delay;
+    /// under durable hosting it is checkpointed around. Does NOT change the error type.
+    [<CustomOperation("delayFor")>]
+    member _.DelayFor(state: WorkflowState<'input, 'output, 'error>, duration: TimeSpan) : WorkflowState<'input, 'output, 'error> =
+        let durableId = $"Delay_{int duration.TotalMilliseconds}ms"
+        let typedStep : TypedWorkflowStep<'output, 'output> = TypedWorkflowStep.Delay(durableId, duration)
+        { Name = state.Name; PackedSteps = state.PackedSteps @ [PackedTypedStep.pack typedStep] }
+
     /// Builds the final workflow definition
     member _.Run(state: WorkflowState<'input, 'output, 'error>) : WorkflowDef<'input, 'output, 'error> =
         { Name = state.Name; TypedSteps = state.PackedSteps }
@@ -329,6 +368,10 @@ type WorkflowBuilder() =
 [<AutoOpen>]
 module WorkflowCE =
     let workflow = WorkflowBuilder()
+
+    /// Type witness helper for awaitEvent.
+    /// Usage: awaitEvent "ApprovalEvent" eventOf<ApprovalDecision>
+    let eventOf<'T> : 'T = Unchecked.defaultof<'T>
 
     /// Prefix operator to convert any supported type to Step<'i, 'o>.
     /// Supports: Task fn, Async fn, TypedAgent, Executor, or Step passthrough.

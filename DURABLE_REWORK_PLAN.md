@@ -178,19 +178,32 @@ Non-streaming `RunAsync` returns a `Run` whose events can be inspected for `Work
       throws on required service, `tryGetService` → None when unregistered, and service propagation into a
       composed nested workflow. Full suite 126/126 green; existing 122 unaffected by the refactor.
 
-### Phase 4 — Unify compilation onto MAF
-- [ ] Teach `toMAF` to emit a `RequestPort` node for `awaitEvent` (remove the throw at `Workflow.fs:195`
-      and `packedStepToMAFExecutor`).
-- [ ] Emit an in-process delay executor for `delayFor`.
-- [ ] Migrate `awaitEvent` / `delayFor` / `eventOf` DSL from `AgentNet.Durable.WorkflowBuilderExtensions`
-      into core; preserve the event-boundary CE invariant.
-- [ ] Escalate the durable lambda-ID warning to an error.
+### Phase 4 — Unify compilation onto MAF (partial) ✅ independent pieces done 2026-06-13
+- [x] Migrated `awaitEvent` / `delayFor` / `eventOf` DSL from `AgentNet.Durable.WorkflowBuilderExtensions`
+      into core (`WorkflowBuilder.fs` intrinsic CE members + `WorkflowCE.eventOf`); event-boundary CE
+      invariant preserved. Durable extensions file emptied (kept as empty AutoOpen module; remove in Phase 6).
+- [x] Emit an in-process delay executor for `delayFor` (`Workflow.InProcess.fs` — `Task.Delay` honoring the
+      seeded `CancellationToken`, forwards input unchanged). New `DelayWorkflowTests.fs`; updated two
+      obsolete `DurableWorkflowTests` (delay no longer throws in-process; awaitEvent error text changed).
+- [→] **Moved to Phase 5 (coupling):** Teach `toMAF` to emit a `RequestPort` for `awaitEvent`. A port makes
+      the workflow *suspend*; the plain `run` (scans for `WorkflowOutputEvent`) can't complete it, so this
+      can't be landed or tested without the suspend/resume runner. Doing it there lets it be validated
+      end-to-end with a real response cycle. (`awaitEvent` still throws a clear message under plain `run`.)
+- [→] **Moved to Phase 5:** escalate the durable lambda-ID warning to an error — only matters once a
+      checkpointed build path exists.
 
-### Phase 5 — Durable run/resume
-- [ ] Implement `Workflow.Durable.start` / `resume` + `DurableRunResult` over `CheckpointManager` +
-      `ResumeAsync` / `SendResponseAsync`.
+### Phase 5 — Request ports + durable run/resume *(absorbs the moved Phase 4 items)*
+- [ ] Teach the durable/suspendable compile path to emit a MAF `RequestPort` (non-generic
+      `RequestPort(id, typeof<unit>, packed.OutputType)` + `BindAsExecutor`, or `AddExternalCall`) for
+      `awaitEvent`; wire `prev → port → next` edges.
+- [ ] In-process responder run path (`RunStreamingAsync` + `SendResponseAsync` / `RunToCompletionAsync`)
+      — this is what makes `awaitEvent` work in-process (the "bonus"), validated without checkpointing.
+- [ ] Implement `Workflow.Durable.start` / `resume` + `DurableRunResult` over `CheckpointManager`
+      (`RunAsync(.., checkpointManager, runId, ..)` / `ResumeAsync(.., checkpointInfo, checkpointManager)` +
+      `Run.ResumeAsync(responses)`).
 - [ ] Register `JsonFSharpConverter` on the checkpoint serializer; verify a DU-carrying workflow
       round-trips through a real checkpoint store.
+- [ ] Escalate the durable lambda-ID warning to an error on the checkpointed build path.
 
 ### Phase 6 — Demolition & sample
 - [ ] Delete `src/AgentNet.Durable.Interop/DurableExecutors.cs`, `DurableExecutorFactory`, `IExecutor`,
@@ -226,3 +239,4 @@ Non-streaming `RunAsync` returns a `Run` whose events can be inspected for `Work
 | 2026-06-12 | 2 | Doc cleanup done **before** Phase 1 (to clear contradictions early). `CLAUDE.md` guardrails stripped; `ARCHITECTURAL_INVARIANTS.md` rewritten; `DESIGN_CE_TYPE_THREADING.md` reviewed & preserved. No production code touched. Next up: Phase 1 (MAF 1.3 → 1.10 upgrade + re-validate 🔎 APIs). |
 | 2026-06-13 | 1 | MAF 1.3.0→1.10.0, M.E.AI 10.5.0→10.6.0 (`Directory.Build.targets` only). Restore clean (no NU conflicts), build 0 errors across net8/9/10, 122/122 tests pass. Re-validated 1.10 checkpoint/RequestPort/Resume API — survived & cleaner (§4 resolved). Only version numbers changed; no source touched. Next up: Phase 3 (add `WorkflowContext.Services`). |
 | 2026-06-13 | 3 | DI plumbing. `WorkflowContext.Services` + helpers (`Executor.fs`); in-process runner refactored to a single context-factory core + `runWithServices`/`runWith`; `toExecutor` now propagates services+ct to nested workflows. New `WorkflowDiTests.fs` (4 tests). 126/126 green. Files: `src/AgentNet/Executor.fs`, `src/AgentNet.InProcess/Workflow.InProcess.fs`, `src/AgentNet.Tests/*`. Next up: Phase 4 (emit RequestPort for awaitEvent; migrate DSL to core). |
+| 2026-06-13 | 4 | **Re-sequenced** after API study: `awaitEvent`→`RequestPort` is inseparable from the suspend/resume runner (a port suspends; plain `run` can't complete it), so it + lambda-ID escalation moved to Phase 5. Landed the independent pieces: migrated `awaitEvent`/`delayFor`/`eventOf` DSL into core (`WorkflowBuilder.fs`/`WorkflowCE`); implemented in-process `delayFor` (`Workflow.InProcess.fs`); emptied `AgentNet.Durable/WorkflowBuilderExtensions.fs`. New `DelayWorkflowTests.fs` (2), updated 2 obsolete `DurableWorkflowTests`. 128/128 green; suite back to ~5s (old 30s-hang delay test removed). Next up: Phase 5 (request ports + run/resume). |

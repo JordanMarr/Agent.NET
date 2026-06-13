@@ -26,9 +26,19 @@ module Workflow =
     let private packedStepToMAFExecutor (makeCtx: unit -> WorkflowContext) (stepIndex: int) (packed: PackedTypedStep) : MAFExecutor =
         match packed.Kind with
         | DurableAwaitEvent eventName ->
-            failwith $"AwaitEvent '{eventName}' cannot be compiled for in-process execution. Use Workflow.Durable.run instead."
+            // Compiled as a MAF RequestPort by the durable/suspendable runner (Phase 5).
+            // The plain in-process runner cannot complete a suspending workflow.
+            failwith $"AwaitEvent '{eventName}' suspends the workflow and requires the durable/suspendable runner."
         | DurableDelay duration ->
-            failwith $"Delay ({duration}) cannot be compiled for in-process execution. Use Workflow.Durable.run instead."
+            // In-process delay: cooperatively wait, then forward the input unchanged.
+            let executorId = $"{packed.DurableId}_{stepIndex}"
+            let fn = Func<obj, Task<obj>>(fun input ->
+                let ctx = makeCtx ()
+                task {
+                    do! Task.Delay(duration, ctx.CancellationToken)
+                    return input
+                })
+            Interop.ExecutorFactory.CreateStep(executorId, fn, packed.OutputType)
         | Regular | Resilience _ ->
             // All regular steps and resilience wrappers can use the ExecuteInProcess function
             let executorId = $"{packed.DurableId}_{stepIndex}"

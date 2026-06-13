@@ -55,25 +55,23 @@ let ``runInProcess fails for workflow with awaitEvent``() =
         awaitEvent "ApprovalDecision" eventOf<ApprovalDecision>
     }
 
-    // Act & Assert - Exception is thrown during MAF compilation
+    // Act & Assert - awaitEvent suspends the workflow, which the plain in-process runner cannot complete.
     let ex = Assert.Throws<Exception>(fun () ->
         (durableWorkflow |> Workflow.InProcess.run "test").GetAwaiter().GetResult() |> ignore)
     test <@ ex.Message.Contains("AwaitEvent") @>
-    test <@ ex.Message.Contains("Workflow.Durable") @>
+    test <@ ex.Message.Contains("suspend") @>
 
 [<Test>]
-let ``runInProcess fails for workflow with delay``() =
-    // Arrange
+let ``runInProcess now supports delayFor (runs the delay in-process)``() =
+    // delayFor is no longer durable-only: in-process it runs as a cooperative delay and forwards its
+    // input unchanged. (DelayWorkflowTests covers timing and cancellation behavior.)
     let durableWorkflow = workflow {
         step (fun (x: int) -> x * 2 |> Task.fromResult)
-        delayFor (TimeSpan.FromSeconds 30.)
+        delayFor (TimeSpan.FromMilliseconds 10.)
     }
 
-    // Act & Assert - Exception is thrown during MAF compilation
-    let ex = Assert.Throws<Exception>(fun () ->
-        (durableWorkflow |> Workflow.InProcess.run 5).GetAwaiter().GetResult() |> ignore)
-    test <@ ex.Message.Contains("Delay") @>
-    test <@ ex.Message.Contains("Workflow.Durable") @>
+    let result = (durableWorkflow |> Workflow.InProcess.run 5).GetAwaiter().GetResult()
+    result =! 10
 
 [<Test>]
 let ``containsDurableOperations returns true for workflow with awaitEvent``() =
