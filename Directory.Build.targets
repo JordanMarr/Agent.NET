@@ -7,20 +7,21 @@
   <!--  These packages must always be version-aligned.           -->
   <!-- ========================================================= -->
   <ItemGroup>
-    <PackageReference Update="Microsoft.Agents.AI" Version="1.3.0" />
-    <PackageReference Update="Microsoft.Agents.AI.OpenAI" Version="1.3.0" />
-    <PackageReference Update="Microsoft.Agents.AI.Workflows" Version="1.3.0" />
+    <PackageReference Update="Microsoft.Agents.AI" Version="1.10.0" />
+    <PackageReference Update="Microsoft.Agents.AI.OpenAI" Version="1.10.0" />
+    <PackageReference Update="Microsoft.Agents.AI.Workflows" Version="1.10.0" />
   </ItemGroup>
 
   <!-- ========================================================= -->
   <!--  Microsoft.Extensions.AI (the foundation MAF sits on)     -->
   <!--  These MUST match the version MAF was compiled against.   -->
+  <!--  MAF 1.10.0 depends on Microsoft.Extensions.AI 10.6.0.    -->
   <!-- ========================================================= -->
   <ItemGroup>
-    <PackageReference Update="Microsoft.Extensions.AI" Version="10.5.0" />
-    <PackageReference Update="Microsoft.Extensions.AI.Core" Version="10.5.0" />
-    <PackageReference Update="Microsoft.Extensions.AI.OpenAI" Version="10.5.0" />
-    <PackageReference Update="Microsoft.Extensions.AI.Abstractions" Version="10.5.0" />
+    <PackageReference Update="Microsoft.Extensions.AI" Version="10.6.0" />
+    <PackageReference Update="Microsoft.Extensions.AI.Core" Version="10.6.0" />
+    <PackageReference Update="Microsoft.Extensions.AI.OpenAI" Version="10.6.0" />
+    <PackageReference Update="Microsoft.Extensions.AI.Abstractions" Version="10.6.0" />
   </ItemGroup>
 
   <!-- ========================================================= -->

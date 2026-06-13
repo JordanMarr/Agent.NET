@@ -100,12 +100,38 @@ response arrives — same shape as the trade sample's start/approve/status endpo
 
 ---
 
-## 4. Open Questions (revisit after Phase 1 upgrade)
+## 4. Open Questions
 
-- 🔎 Exact 1.10 API for: `CheckpointManager.CreateJson`, `InProcessExecution.WithCheckpointing`,
-  `ResumeAsync` / `Run.ResumeAsync(responses)` / `SendResponseAsync`, and `RequestPort.Create<TReq,TResp>`
-  + how a port binds as a graph node (`BindAsExecutor` in 1.3). Confirm streaming vs non-streaming run
-  is needed to observe `RequestInfoEvent`.
+### ✅ Resolved in Phase 1 — confirmed against MAF 1.10.0
+
+The checkpoint/`RequestPort` surface survived the 1.3 → 1.10 jump and is cleaner than the 1.3-based plan
+assumed. Confirmed signatures (from `Microsoft.Agents.AI.Workflows.xml`, net8.0):
+
+- `CheckpointManager.CreateJson(ICheckpointStore<JsonElement>, JsonSerializerOptions)` — **intact**; our
+  `JsonSerializerOptions` (+ `JsonFSharpConverter`) flows in. `CreateInMemory` also available.
+- `InProcessExecution.RunAsync<T>(workflow, input, CheckpointManager, runId, ct)` — non-streaming run
+  **with checkpointing built in** (no `WithCheckpointing` needed). `runId` = our durable instance id.
+- `InProcessExecution.ResumeAsync(workflow, CheckpointInfo, CheckpointManager, ct)` — non-streaming
+  resume from a persisted checkpoint (cross-process / crash recovery).
+- `Run.ResumeAsync(IEnumerable<ExternalResponse>, ct)` (+ generic overload) and
+  `StreamingRun.SendResponseAsync(ExternalResponse)` — supply the response to a halted request port.
+- `RequestPort.Create<TRequest,TResponse>(id)` — request-port node for `awaitEvent`.
+- `FileSystemJsonCheckpointStore(DirectoryInfo)` — file-backed store ships in-box.
+
+**Composition for durable human-in-the-loop:** halt at request port → checkpoint committed → (process may
+die) → `ResumeAsync(workflow, checkpointInfo, checkpointManager)` rebuilds the `Run` → `Run.ResumeAsync(responses)`.
+Non-streaming `RunAsync` returns a `Run` whose events can be inspected for `WorkflowOutputEvent`
+(Completed) vs `RequestInfoEvent` (Suspended) — so the `DurableRunResult` split needs no streaming.
+
+### Still open
+
+- **Packaging:** does `AgentNet.Durable` survive as a separate package, or fold the thin helpers into
+  core + ship Azure-backed `ICheckpointStore` implementations separately? Decide after Phase 5.
+- `PendingRequest` shape — how much MAF type (`ExternalRequest`/`RequestPortInfo`) to surface vs. wrap
+  in F#-typed terms (event name + expected response type + request id).
+- Which checkpoint stores ship in-box beyond in-memory + `FileSystemJsonCheckpointStore` (Azure follow-up).
+- 🔎 Exact net-of-`Run` API for reading pending requests off a *restored* run before responding —
+  confirm during Phase 5 implementation.
 - **Packaging:** does `AgentNet.Durable` survive as a separate package, or fold the thin helpers into
   core + ship Azure-backed `ICheckpointStore` implementations separately? Decide after the API is firm.
 - `PendingRequest` shape — how much MAF type (`ExternalRequest`/`RequestPortInfo`) to surface vs. wrap
@@ -120,11 +146,14 @@ response arrives — same shape as the trade sample's start/approve/status endpo
 > Tests follow the implementation here — this is a deliberate redesign, so the implementation is the
 > source of truth (overrides the usual "update tests not impl" default for this rework).
 
-### Phase 1 — Upgrade & re-validate  *(no behavior change)*
-- [ ] Bump MAF `1.3.0 → 1.10.0` in `Directory.Build.targets`; align `Microsoft.Extensions.AI` to the
-      version 1.10 was built against.
-- [ ] Build green across all TFMs (net8/9/10).
-- [ ] Re-confirm every 🔎 API above against the real 1.10 surface; update this doc.
+### Phase 1 — Upgrade & re-validate  *(no behavior change)* ✅ done 2026-06-13
+- [x] Bump MAF `1.3.0 → 1.10.0` in `Directory.Build.targets`; aligned `Microsoft.Extensions.AI`
+      `10.5.0 → 10.6.0` (the version MAF 1.10.0 depends on).
+- [x] Build green across all TFMs (net8/9/10) — **0 errors**, only pre-existing benign warnings. No
+      interop changes needed; `Executors.cs`/`DurableExecutors.cs` still compile against MAF 1.10.
+- [x] Tests green — **122/122 passed** on net10.0. Upgrade is behavior-preserving.
+- [x] Re-confirmed the checkpoint/`RequestPort`/`ResumeAsync` surface against real 1.10 (see §4). API
+      survived and is cleaner than the 1.3-based plan assumed.
 
 ### Phase 2 — Retire the old guardrails  *(docs only)* ✅ done 2026-06-12
 - [x] Rewrite `CLAUDE.md` "do NOT modify" block (Workflow.Durable.run / toMAF / direct-interpreter / DTFx).
@@ -188,3 +217,4 @@ response arrives — same shape as the trade sample's start/approve/status endpo
 |------|-------|-------|
 | 2026-06-12 | 0 | Plan drafted. Direction confirmed: MAF-native, drop DF. Design decisions §3 locked. |
 | 2026-06-12 | 2 | Doc cleanup done **before** Phase 1 (to clear contradictions early). `CLAUDE.md` guardrails stripped; `ARCHITECTURAL_INVARIANTS.md` rewritten; `DESIGN_CE_TYPE_THREADING.md` reviewed & preserved. No production code touched. Next up: Phase 1 (MAF 1.3 → 1.10 upgrade + re-validate 🔎 APIs). |
+| 2026-06-13 | 1 | MAF 1.3.0→1.10.0, M.E.AI 10.5.0→10.6.0 (`Directory.Build.targets` only). Restore clean (no NU conflicts), build 0 errors across net8/9/10, 122/122 tests pass. Re-validated 1.10 checkpoint/RequestPort/Resume API — survived & cleaner (§4 resolved). Only version numbers changed; no source touched. Next up: Phase 3 (add `WorkflowContext.Services`). |
