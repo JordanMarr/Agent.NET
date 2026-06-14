@@ -193,11 +193,18 @@ Non-streaming `RunAsync` returns a `Run` whose events can be inspected for `Work
       checkpointed build path exists.
 
 ### Phase 5 — Request ports + durable run/resume *(absorbs the moved Phase 4 items)*
-- [ ] Teach the durable/suspendable compile path to emit a MAF `RequestPort` (non-generic
-      `RequestPort(id, typeof<unit>, packed.OutputType)` + `BindAsExecutor`, or `AddExternalCall`) for
-      `awaitEvent`; wire `prev → port → next` edges.
-- [ ] In-process responder run path (`RunStreamingAsync` + `SendResponseAsync` / `RunToCompletionAsync`)
-      — this is what makes `awaitEvent` work in-process (the "bonus"), validated without checkpointing.
+- [x] **Sitting 1 done 2026-06-13** — `awaitEvent` → MAF `RequestPort` compilation + in-process responder.
+  - `toMAFCore` now emits a `RequestPort(portId, typeof<WorkflowUnit>, OutputType)` for `awaitEvent` via
+    `op_Implicit` to `ExecutorBinding`; the node list is uniform `ExecutorBinding`. Plain `run` pre-checks
+    `hasAwaitEvent` and throws a clear "suspends… use runWithResponses" message.
+  - `runWithResponses (respond: PendingRequest -> obj)` drives a suspending workflow to completion in-process
+    via `RunStreamingAsync` + `WatchStreamAsync` + `SendResponseAsync` (the "bonus" — awaitEvent in-process).
+  - **Discovered + fixed a latent bug:** F# `unit` boxes to `null` and MAF **drops null messages**, so any
+    `unit`-emitting intermediate step (the whole event-boundary pattern) silently stalled in-process. Added a
+    `WorkflowUnit` non-null surrogate, mapped `unit ↔ WorkflowUnit` at the obj boundary (`boundaryBox` /
+    `boundaryUnbox` in core `Workflow.fs`; `mafType` for declared types + port request type in InProcess).
+    Also unwrap the `ExternalResponse` the port forwards downstream (`unwrapInput`). New regression test for
+    plain `unit → unit` routing. 131/131 green; full solution builds.
 - [ ] Implement `Workflow.Durable.start` / `resume` + `DurableRunResult` over `CheckpointManager`
       (`RunAsync(.., checkpointManager, runId, ..)` / `ResumeAsync(.., checkpointInfo, checkpointManager)` +
       `Run.ResumeAsync(responses)`).
@@ -240,3 +247,4 @@ Non-streaming `RunAsync` returns a `Run` whose events can be inspected for `Work
 | 2026-06-13 | 1 | MAF 1.3.0→1.10.0, M.E.AI 10.5.0→10.6.0 (`Directory.Build.targets` only). Restore clean (no NU conflicts), build 0 errors across net8/9/10, 122/122 tests pass. Re-validated 1.10 checkpoint/RequestPort/Resume API — survived & cleaner (§4 resolved). Only version numbers changed; no source touched. Next up: Phase 3 (add `WorkflowContext.Services`). |
 | 2026-06-13 | 3 | DI plumbing. `WorkflowContext.Services` + helpers (`Executor.fs`); in-process runner refactored to a single context-factory core + `runWithServices`/`runWith`; `toExecutor` now propagates services+ct to nested workflows. New `WorkflowDiTests.fs` (4 tests). 126/126 green. Files: `src/AgentNet/Executor.fs`, `src/AgentNet.InProcess/Workflow.InProcess.fs`, `src/AgentNet.Tests/*`. Next up: Phase 4 (emit RequestPort for awaitEvent; migrate DSL to core). |
 | 2026-06-13 | 4 | **Re-sequenced** after API study: `awaitEvent`→`RequestPort` is inseparable from the suspend/resume runner (a port suspends; plain `run` can't complete it), so it + lambda-ID escalation moved to Phase 5. Landed the independent pieces: migrated `awaitEvent`/`delayFor`/`eventOf` DSL into core (`WorkflowBuilder.fs`/`WorkflowCE`); implemented in-process `delayFor` (`Workflow.InProcess.fs`); emptied `AgentNet.Durable/WorkflowBuilderExtensions.fs`. New `DelayWorkflowTests.fs` (2), updated 2 obsolete `DurableWorkflowTests`. 128/128 green; suite back to ~5s (old 30s-hang delay test removed). Next up: Phase 5 (request ports + run/resume). |
+| 2026-06-13 | 5a | Request ports + in-process responder. `awaitEvent`→MAF `RequestPort` in `toMAFCore`; `runWithResponses` drives suspending workflows in-process (awaitEvent bonus works end-to-end). Found+fixed latent unit-routing bug (F# unit→null, MAF drops null) via `WorkflowUnit` surrogate at the obj boundary + `ExternalResponse` unwrap. New `AwaitEventInProcessTests.fs` (3). 131/131 green; full solution builds. Files: `src/AgentNet/Workflow.fs`, `src/AgentNet.InProcess/Workflow.InProcess.fs`, tests. Next: Phase 5b (durable start/resume over CheckpointManager + JsonFSharpConverter + lambda escalation). |

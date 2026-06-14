@@ -4,6 +4,13 @@ open System
 open System.Threading.Tasks
 open AgentNet.Interop
 
+/// MAF-boundary surrogate for F# `unit`. F# `unit` boxes to `null`, and MAF drops null messages
+/// (its StepExecutor also rejects null input), so a `unit`-emitting step would not route to the next
+/// node. At the obj boundary we represent `unit` as this non-null singleton instead.
+[<Sealed>]
+type WorkflowUnit private () =
+    static member val Instance = WorkflowUnit()
+
 /// A typed workflow step that preserves input/output type information.
 /// This is the single source of truth for both definition and execution.
 /// No erased types - all type information is preserved.
@@ -103,13 +110,23 @@ type WorkflowState<'input, 'output, 'error> = {
 /// reflection at execution time. The packed steps contain fully typed closures.
 module PackedTypedStep =
 
+    /// Unbox an obj message into the step's typed input, mapping the unit surrogate back to ().
+    let boundaryUnbox<'i> (input: obj) : 'i =
+        if typeof<'i> = typeof<unit> then Unchecked.defaultof<'i>
+        else input :?> 'i
+
+    /// Box a step's typed output into an obj message, mapping unit to the non-null WorkflowUnit
+    /// surrogate so MAF routes it (F# unit boxes to null, which MAF drops).
+    let boundaryBox<'o> (value: 'o) : obj =
+        if typeof<'o> = typeof<unit> then box WorkflowUnit.Instance else box value
+
     /// Creates an in-process execution function for a step by wrapping with obj boundaries.
     /// The inner execution remains fully typed; only the boundaries use boxing.
     let private createInProcessExec<'i, 'o> (execute: 'i -> WorkflowContext -> Task<'o>) =
         fun (input: obj) (ctx: WorkflowContext) -> task {
-            let typedInput = input :?> 'i
+            let typedInput = boundaryUnbox<'i> input
             let! result = execute typedInput ctx
-            return result :> obj
+            return boundaryBox<'o> result
         }
 
     /// Packs a TypedWorkflowStep into a PackedTypedStep, capturing type parameters.
@@ -138,9 +155,9 @@ module PackedTypedStep =
 
         | TypedWorkflowStep.Route (durableId, router) ->
             let inProcessExec = fun (input: obj) (ctx: WorkflowContext) -> task {
-                let typedInput = input :?> 'i
+                let typedInput = boundaryUnbox<'i> input
                 let! result = router typedInput ctx
-                return result :> obj
+                return boundaryBox<'o> result
             }
             {
                 DurableId = durableId
@@ -287,11 +304,11 @@ module PackedTypedStep =
 
         | TypedWorkflowStep.TryStep (durableId, name, execute) ->
             let inProcessExec = fun (input: obj) (ctx: WorkflowContext) -> task {
-                let typedInput = input :?> 'i
+                let typedInput = boundaryUnbox<'i> input
                 let! result = execute typedInput ctx
                 match result with
                 | Ok value ->
-                    return value :> obj
+                    return boundaryBox<'o> value
                 | Error error ->
                     // Signal early-exit with structured error payload
                     return EarlyExitSignal error :> obj

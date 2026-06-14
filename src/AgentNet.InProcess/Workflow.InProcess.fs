@@ -13,6 +13,20 @@ type MAFWorkflow = Microsoft.Agents.AI.Workflows.Workflow
 type MAFWorkflowBuilder = Microsoft.Agents.AI.Workflows.WorkflowBuilder
 type MAFInProcessExecution = Microsoft.Agents.AI.Workflows.InProcessExecution
 type MAFWorkflowOutputEvent = Microsoft.Agents.AI.Workflows.WorkflowOutputEvent
+type MAFExecutorBinding = Microsoft.Agents.AI.Workflows.ExecutorBinding
+type MAFRequestPort = Microsoft.Agents.AI.Workflows.RequestPort
+type MAFRequestInfoEvent = Microsoft.Agents.AI.Workflows.RequestInfoEvent
+type MAFExternalRequest = Microsoft.Agents.AI.Workflows.ExternalRequest
+type MAFExternalResponse = Microsoft.Agents.AI.Workflows.ExternalResponse
+
+/// Information about a pending external event (awaitEvent) that a suspended workflow is awaiting.
+/// Surfaced to the in-process responder so it can supply the event payload.
+type PendingRequest = {
+    /// The MAF request-port id (encodes the event name and type).
+    PortId: string
+    /// The awaited event name (from awaitEvent).
+    EventName: string
+}
 
 /// Functions for executing workflows in-process
 [<RequireQualifiedAccess>]
@@ -20,15 +34,31 @@ module Workflow =
 
     // ============ MAF COMPILATION ============
 
-    /// Converts a PackedTypedStep to a MAF Executor.
-    /// `makeCtx` produces the WorkflowContext seeded for this run (cancellation token + DI services).
-    /// The stepIndex is used to ensure unique executor IDs within a workflow.
-    let private packedStepToMAFExecutor (makeCtx: unit -> WorkflowContext) (stepIndex: int) (packed: PackedTypedStep) : MAFExecutor =
+    /// The MAF request-port id for an awaitEvent packed step at a given position.
+    /// Must be recomputed identically by the responder/resume side to match suspension events.
+    let internal awaitPortId (stepIndex: int) (packed: PackedTypedStep) = $"{packed.DurableId}_{stepIndex}"
+
+    /// Maps an F# type to the type MAF sees at the boundary: unit -> WorkflowUnit (see WorkflowUnit).
+    let private mafType (t: System.Type) = if t = typeof<unit> then typeof<WorkflowUnit> else t
+
+    /// A RequestPort forwards its response downstream wrapped as an ExternalResponse; the next step
+    /// expects the unwrapped payload. Unwrap it here at the MAF->step boundary.
+    let private unwrapInput (input: obj) : obj =
+        match input with
+        | :? MAFExternalResponse as r -> r.Data.As<obj>()
+        | _ -> input
+
+    /// Converts a PackedTypedStep to a MAF graph node (as an ExecutorBinding so regular executors and
+    /// request ports compose uniformly). `makeCtx` produces the WorkflowContext seeded for this run.
+    /// - awaitEvent -> a MAF RequestPort (request = unit per the event-boundary invariant, response = 'event)
+    /// - delayFor   -> an in-process delay executor
+    /// - everything else -> a step executor over ExecuteInProcess
+    let private packedStepToBinding (makeCtx: unit -> WorkflowContext) (stepIndex: int) (packed: PackedTypedStep) : MAFExecutorBinding =
         match packed.Kind with
-        | DurableAwaitEvent eventName ->
-            // Compiled as a MAF RequestPort by the durable/suspendable runner (Phase 5).
-            // The plain in-process runner cannot complete a suspending workflow.
-            failwith $"AwaitEvent '{eventName}' suspends the workflow and requires the durable/suspendable runner."
+        | DurableAwaitEvent _ ->
+            // Request = unit (per the event-boundary invariant) -> WorkflowUnit at the MAF boundary.
+            let port = MAFRequestPort(awaitPortId stepIndex packed, typeof<WorkflowUnit>, mafType packed.OutputType)
+            MAFExecutorBinding.op_Implicit(port)
         | DurableDelay duration ->
             // In-process delay: cooperatively wait, then forward the input unchanged.
             let executorId = $"{packed.DurableId}_{stepIndex}"
@@ -36,16 +66,20 @@ module Workflow =
                 let ctx = makeCtx ()
                 task {
                     do! Task.Delay(duration, ctx.CancellationToken)
-                    return input
+                    return unwrapInput input
                 })
-            Interop.ExecutorFactory.CreateStep(executorId, fn, packed.OutputType)
+            MAFExecutorBinding.op_Implicit(Interop.ExecutorFactory.CreateStep(executorId, fn, mafType packed.OutputType))
         | Regular | Resilience _ ->
             // All regular steps and resilience wrappers can use the ExecuteInProcess function
             let executorId = $"{packed.DurableId}_{stepIndex}"
             let fn = Func<obj, Task<obj>>(fun input ->
                 let ctx = makeCtx ()
-                packed.ExecuteInProcess input ctx)
-            Interop.ExecutorFactory.CreateStep(executorId, fn, packed.OutputType)
+                packed.ExecuteInProcess (unwrapInput input) ctx)
+            MAFExecutorBinding.op_Implicit(Interop.ExecutorFactory.CreateStep(executorId, fn, mafType packed.OutputType))
+
+    /// True if the workflow contains an awaitEvent (i.e., it suspends and needs a responder/durable host).
+    let internal hasAwaitEvent (workflow: WorkflowDef<'i, 'o, 'e>) : bool =
+        workflow.TypedSteps |> List.exists (fun p -> match p.Kind with DurableAwaitEvent _ -> true | _ -> false)
 
     /// Core compilation: builds a MAF Workflow from packed steps via WorkflowBuilder, seeding each
     /// step's WorkflowContext with `makeCtx` (cancellation token + DI services).
@@ -54,15 +88,15 @@ module Workflow =
         match workflow.TypedSteps with
         | [] -> failwith "Workflow must have at least one step"
         | steps ->
-            let executors = steps |> List.mapi (packedStepToMAFExecutor makeCtx)
-            match executors with
+            let bindings = steps |> List.mapi (packedStepToBinding makeCtx)
+            match bindings with
             | [] -> failwith "Workflow must have at least one step"
-            | firstExecutor :: restExecutors ->
-                let mutable builder = MAFWorkflowBuilder(firstExecutor).WithName(name)
-                let mutable prev = firstExecutor
-                for exec in restExecutors do
-                    builder <- builder.AddEdge(prev, exec)
-                    prev <- exec
+            | first :: rest ->
+                let mutable builder = MAFWorkflowBuilder(first).WithName(name)
+                let mutable prev = first
+                for b in rest do
+                    builder <- builder.AddEdge(prev, b)
+                    prev <- b
                 builder <- builder.WithOutputFrom(prev)
                 builder.Build()
 
@@ -132,6 +166,10 @@ module Workflow =
         /// WorkflowContext via `makeCtx`. `ct` is also passed to MAF's RunAsync.
         let private runCore<'input, 'output, 'error> (makeCtx: unit -> WorkflowContext) (ct: System.Threading.CancellationToken) (input: 'input) (workflow: WorkflowDef<'input, 'output, 'error>) : Task<'output> =
             task {
+                // awaitEvent suspends the workflow at a RequestPort; the plain runner cannot complete it.
+                if hasAwaitEvent workflow then
+                    failwith "AwaitEvent suspends execution; the plain in-process runner cannot complete a suspending workflow. Use Workflow.InProcess.runWithResponses (in-process) or the durable runner."
+
                 // Wrap steps to capture exceptions before MAF swallows them
                 let captured = ref Unchecked.defaultof<ExceptionDispatchInfo>
                 let wrappedWorkflow = wrapStepsWithExceptionCapture captured workflow
@@ -180,6 +218,58 @@ module Workflow =
         /// IServiceProvider. This is the most general in-process entry point.
         let runWith<'input, 'output, 'error> (services: IServiceProvider) (ct: System.Threading.CancellationToken) (input: 'input) (workflow: WorkflowDef<'input, 'output, 'error>) : Task<'output> =
             runCore (fun () -> WorkflowContext.create() |> WorkflowContext.withCancellation ct |> WorkflowContext.withServices services) ct input workflow
+
+        /// Runs a workflow in-process, supplying responses to awaitEvent suspension points via `respond`.
+        /// `respond` receives info about each awaited event and returns the response value (the event
+        /// payload, boxed). This is the in-process counterpart to durable resume: it lets awaitEvent
+        /// workflows run end-to-end without durable hosting. Works for workflows with no awaitEvent too.
+        let runWithResponses<'input, 'output, 'error> (respond: PendingRequest -> obj) (input: 'input) (workflow: WorkflowDef<'input, 'output, 'error>) : Task<'output> =
+            task {
+                let captured = ref Unchecked.defaultof<ExceptionDispatchInfo>
+                let wrappedWorkflow = wrapStepsWithExceptionCapture captured workflow
+                let mafWorkflow = toMAFCore (fun () -> WorkflowContext.create()) wrappedWorkflow
+
+                // Recompute portId -> eventName (same ids used during compilation) so the responder
+                // can identify which event it is answering.
+                let eventNames =
+                    workflow.TypedSteps
+                    |> List.mapi (fun i p ->
+                        match p.Kind with
+                        | DurableAwaitEvent name -> Some (awaitPortId i p, name)
+                        | _ -> None)
+                    |> List.choose id
+                    |> Map.ofList
+
+                let! streamingRun = MAFInProcessExecution.RunStreamingAsync(mafWorkflow, input :> obj, null, System.Threading.CancellationToken.None)
+
+                let mutable lastResult: obj option = None
+                let e = streamingRun.WatchStreamAsync(System.Threading.CancellationToken.None).GetAsyncEnumerator(System.Threading.CancellationToken.None)
+                let mutable go = true
+                while go do
+                    let! has = e.MoveNextAsync()
+                    if not has then
+                        go <- false
+                    else
+                        match box e.Current with
+                        | :? MAFRequestInfoEvent as ri ->
+                            let req = ri.Request
+                            let portId = req.PortInfo.PortId
+                            let pending = { PortId = portId; EventName = (eventNames |> Map.tryFind portId |> Option.defaultValue portId) }
+                            let response = req.CreateResponse(respond pending)
+                            do! streamingRun.SendResponseAsync(response)
+                        | :? MAFWorkflowOutputEvent as output ->
+                            lastResult <- Some output.Data
+                        | _ -> ()
+                do! e.DisposeAsync()
+
+                let edi = System.Threading.Volatile.Read(&captured.contents)
+                if not (isNull edi) then
+                    edi.Throw()
+
+                match lastResult with
+                | Some data -> return convertToOutput<'output> data
+                | None -> return failwith "Workflow did not produce output. No WorkflowOutputEvent found (was every awaitEvent answered?)."
+            }
 
         // AGENTS: DO NOT CHANGE THIS FUNCTION UNLESS EXPLICIT INSTRUCTIONS ARE GIVEN TO DO SO.
         /// Runs a workflow via MAF InProcessExecution, catching EarlyExitException.

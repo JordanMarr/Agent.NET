@@ -14,6 +14,7 @@
 		<Compile Include="SequentialWorkflowTests.fs" />
 		<Compile Include="WorkflowDiTests.fs" />
 		<Compile Include="DelayWorkflowTests.fs" />
+		<Compile Include="AwaitEventInProcessTests.fs" />
 		<Compile Include="RoutingWorkflowTests.fs" />
 		<Compile Include="ParallelWorkflowTests.fs" />
 		<Compile Include="ResultWorkflowTests.fs" />
