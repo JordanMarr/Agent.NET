@@ -8,7 +8,8 @@ open AgentNet.Interop
 /// (its StepExecutor also rejects null input), so a `unit`-emitting step would not route to the next
 /// node. At the obj boundary we represent `unit` as this non-null singleton instead.
 [<Sealed>]
-type WorkflowUnit private () =
+type WorkflowUnit() =
+    // Public parameterless ctor + no state so it round-trips through System.Text.Json checkpoints.
     static member val Instance = WorkflowUnit()
 
 /// A typed workflow step that preserves input/output type information.

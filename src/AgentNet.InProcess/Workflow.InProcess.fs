@@ -320,3 +320,112 @@ module Workflow =
                 Name = name
                 Execute = fun input ctx -> runWith ctx.Services ctx.CancellationToken input workflow
             }
+
+    /// Durable (checkpointed) execution over MAF's checkpoint/resume model. This is the same MAF
+    /// execution engine as InProcess, plus a CheckpointManager: the run is checkpointed at superstep
+    /// boundaries and can be suspended at an awaitEvent and resumed later (possibly in another process).
+    module Durable =
+
+        type MAFStreamingRun = Microsoft.Agents.AI.Workflows.StreamingRun
+        type CheckpointManager = Microsoft.Agents.AI.Workflows.CheckpointManager
+        type CheckpointInfo = Microsoft.Agents.AI.Workflows.CheckpointInfo
+
+        /// Outcome of a durable run/resume: either the workflow completed with a value, or it suspended
+        /// at one or more awaitEvent points (with the checkpoint needed to resume).
+        type DurableRunResult<'output> =
+            | Completed of 'output
+            | Suspended of awaiting: PendingRequest list * checkpoint: CheckpointInfo
+
+        /// Creates an in-memory checkpoint manager. Checkpoints live only for the lifetime of the
+        /// process (no cross-process durability) — useful for tests and single-process suspend/resume.
+        let inMemoryCheckpoints () : CheckpointManager = CheckpointManager.CreateInMemory()
+
+        /// JsonSerializerOptions with F# record & DU support (via JsonFSharpConverter) registered.
+        /// This is what lets F# discriminated unions round-trip through JSON checkpoints — the thing
+        /// Azure Durable Functions' closed serializer could not do.
+        let fsharpJsonOptions () =
+            let opts = System.Text.Json.JsonSerializerOptions()
+            opts.Converters.Add(System.Text.Json.Serialization.JsonFSharpConverter())
+            opts
+
+        /// Creates a checkpoint manager that persists checkpoints as JSON files under `directory`,
+        /// with F# records & DUs supported. Checkpoints survive process restarts (cross-process durable).
+        let fileSystemJsonCheckpoints (directory: string) : CheckpointManager =
+            let store = new Microsoft.Agents.AI.Workflows.Checkpointing.FileSystemJsonCheckpointStore(System.IO.DirectoryInfo(directory))
+            CheckpointManager.CreateJson(store, fsharpJsonOptions ())
+
+        /// portId -> eventName for the workflow's awaitEvent steps (ids recomputed to match suspensions).
+        let private eventNameMap (workflow: WorkflowDef<'i, 'o, 'e>) =
+            workflow.TypedSteps
+            |> List.mapi (fun i p ->
+                match p.Kind with
+                | DurableAwaitEvent name -> Some (awaitPortId i p, name)
+                | _ -> None)
+            |> List.choose id
+            |> Map.ofList
+
+        let private convertOutput<'output> (data: obj) : 'output =
+            match data with
+            | :? 'output as result -> result
+            | _ -> data :?> 'output
+
+        /// Drives a checkpointed streaming run: answers each request via `respond`. If `respond` returns
+        /// None for a request, the run is left suspended and we return Suspended with the checkpoint.
+        let private driveStreaming<'output> (run: MAFStreamingRun) (names: Map<string, string>) (respond: PendingRequest -> obj option) : Task<DurableRunResult<'output>> =
+            task {
+                let mutable lastResult: obj option = None
+                let pending = ResizeArray<PendingRequest>()
+                let mutable errorText = null
+                let e = run.WatchStreamAsync(System.Threading.CancellationToken.None).GetAsyncEnumerator(System.Threading.CancellationToken.None)
+                let mutable go = true
+                while go do
+                    let! has = e.MoveNextAsync()
+                    if not has then
+                        go <- false
+                    else
+                        // Surface workflow-level errors (e.g. a checkpoint serialization failure) which MAF
+                        // emits as an event rather than throwing.
+                        if e.Current.GetType().Name.Contains("Error") then errorText <- string e.Current
+                        match box e.Current with
+                        | :? MAFRequestInfoEvent as ri ->
+                            let portId = ri.Request.PortInfo.PortId
+                            let pr = { PortId = portId; EventName = (names |> Map.tryFind portId |> Option.defaultValue portId) }
+                            match respond pr with
+                            | Some value ->
+                                do! run.SendResponseAsync(ri.Request.CreateResponse value)
+                            | None ->
+                                pending.Add pr
+                                go <- false
+                        | :? MAFWorkflowOutputEvent as o ->
+                            lastResult <- Some o.Data
+                        | _ -> ()
+                do! e.DisposeAsync()
+
+                match lastResult with
+                | Some data -> return Completed (convertOutput<'output> data)
+                | None when pending.Count > 0 -> return Suspended (List.ofSeq pending, run.LastCheckpoint)
+                | None when not (isNull errorText) ->
+                    return failwith $"Durable run failed: {errorText}"
+                | None ->
+                    return failwith "Durable run produced neither output nor a pending request."
+            }
+
+        /// Starts a durable run. Runs (checkpointing along the way) until the workflow completes or
+        /// suspends at its first awaitEvent. The returned checkpoint (on Suspended) is committed to the
+        /// CheckpointManager and can be used to resume later.
+        let start<'input, 'output, 'error> (checkpointManager: CheckpointManager) (input: 'input) (workflow: WorkflowDef<'input, 'output, 'error>) : Task<DurableRunResult<'output>> =
+            task {
+                let maf = toMAFCore (fun () -> WorkflowContext.create()) workflow
+                let! run = MAFInProcessExecution.RunStreamingAsync(maf, input :> obj, checkpointManager, null, System.Threading.CancellationToken.None)
+                return! driveStreaming<'output> run (eventNameMap workflow) (fun _ -> None)
+            }
+
+        /// Resumes a durable run from a checkpoint, answering awaited events via `respond` (return Some
+        /// payload to answer, None to leave that event suspended). Runs until completion or the next
+        /// unanswered suspension.
+        let resume<'input, 'output, 'error> (checkpointManager: CheckpointManager) (workflow: WorkflowDef<'input, 'output, 'error>) (checkpoint: CheckpointInfo) (respond: PendingRequest -> obj option) : Task<DurableRunResult<'output>> =
+            task {
+                let maf = toMAFCore (fun () -> WorkflowContext.create()) workflow
+                let! run = MAFInProcessExecution.ResumeStreamingAsync(maf, checkpoint, checkpointManager, System.Threading.CancellationToken.None)
+                return! driveStreaming<'output> run (eventNameMap workflow) respond
+            }

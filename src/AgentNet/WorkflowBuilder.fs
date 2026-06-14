@@ -343,8 +343,9 @@ type WorkflowBuilder() =
         if not (eventType.IsPublic || eventType.IsNestedPublic) then
             failwith $"awaitEvent: event type '{eventType.FullName}' must be public"
 
-        if eventType.IsAbstract then
-            failwith $"awaitEvent: event type '{eventType.FullName}' cannot be abstract"
+        // NOTE: F# discriminated unions compile to abstract CLR types, and they are a primary intended
+        // event payload (they round-trip via JsonFSharpConverter in JSON checkpoints), so we must NOT
+        // reject abstract types here.
 
         let durableId = $"AwaitEvent_{eventName}_{eventType.Name}"
         let typedStep : TypedWorkflowStep<unit, 'event> = TypedWorkflowStep.AwaitEvent(durableId, eventName)
