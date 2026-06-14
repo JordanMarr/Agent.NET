@@ -42,7 +42,6 @@
 
   <ItemGroup>
     <PackageReference Include="Microsoft.Agents.AI.Workflows" />
-    <PackageReference Include="FSharp.SystemTextJson" Version="1.4.36" />
   </ItemGroup>
 
   <ItemGroup>

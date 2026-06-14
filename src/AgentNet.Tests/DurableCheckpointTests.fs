@@ -66,13 +66,16 @@ let ``durable round-trips a record through a JSON file checkpoint``() =
     finally
         try Directory.Delete(dir, true) with _ -> ()
 
-// KNOWN GAP: F# discriminated unions do not yet round-trip through MAF's JSON checkpoint marshaller.
-// MAF marshals checkpoint values with its own System.Text.Json configuration and does NOT honor the
-// JsonSerializerOptions passed to CheckpointManager.CreateJson, so our JsonFSharpConverter never engages
-// and STJ rejects the union ("F# discriminated union serialization is not supported"). Records work
-// (STJ handles them natively). This is the rework's headline premise and needs a focused fix (likely a
-// custom IWireMarshaller<JsonElement> that applies the F# converter). Tracked in DURABLE_REWORK_PLAN.md.
-[<Test; Ignore("Pending: inject JsonFSharpConverter into MAF's checkpoint value marshaller (see plan)")>]
+// KNOWN GAP (spike 2026-06-14): F# discriminated unions do not round-trip through MAF's JSON checkpoint.
+// Root cause: MAF's JsonMarshaller DOES consult the JsonSerializerOptions we pass to CreateJson (as a
+// fallback), and adding DefaultJsonTypeInfoResolver + JsonFSharpConverter makes the *suspension* checkpoint
+// serialize fine. But MAF records each value's CONCRETE runtime type in PortableValue — for a DU value that
+// is the union *case* subtype (e.g. ApprovalOutcome+Approved), and JsonFSharpConverter only recognizes the
+// union type, not a bare case type (and the generic CreateResponse<union> doesn't change the recorded type).
+// So the DU *response value* still fails on resume. A fix needs a converter that bridges case-type ->
+// union; the clean future path is MAF adopting an STJ with native F# DU support. Records work today.
+// See DURABLE_REWORK_PLAN.md.
+[<Test; Ignore("F# DU checkpoint serialization: union case-type polymorphism, needs a bridge converter (see plan)")>]
 let ``durable round-trips an F# DU through a JSON file checkpoint``() =
     let dir = Path.Combine(Path.GetTempPath(), "agentnet-ckpt-" + Guid.NewGuid().ToString("N"))
     Directory.CreateDirectory(dir) |> ignore

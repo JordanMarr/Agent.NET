@@ -215,15 +215,24 @@ Non-streaming `RunAsync` returns a `Run` whose events can be inspected for `Work
     real on-disk JSON checkpoint (`DurableCheckpointTests.fs`). Dropped the `awaitEvent` `IsAbstract` guard
     (F# DUs are abstract CLR types — that check wrongly blocked them). `WorkflowUnit` ctor made public so it
     survives JSON checkpoints. 134 pass / 1 skipped.
-- [ ] **⚠️ NEWLY-DISCOVERED GAP — the headline premise needs real work.** F# **discriminated unions** do
-      NOT round-trip through MAF's JSON checkpoint: MAF marshals checkpoint *values* with its own STJ config
-      and **ignores the `JsonSerializerOptions` passed to `CheckpointManager.CreateJson`**, so our
-      `JsonFSharpConverter` never engages and STJ throws "F# discriminated union serialization is not
-      supported". Records work (STJ native). The premise "DUs just work via CreateJson(options)" is false as
-      assumed. Likely fix: a custom `IWireMarshaller<JsonElement>` (or `JsonMarshaller` subclass) that applies
-      the F# converter to value marshalling. **This is the rework's #1 justification — must be solved.** Not a
-      showstopper (MAF is extensible here, unlike DTFx's closed serializer), but a focused task. Skipped test
-      `durable round-trips an F# DU through a JSON file checkpoint` documents it.
+- [ ] **F# DU checkpoint serialization — gap, NOT a small fix (spike concluded 2026-06-14).** Records
+      round-trip through the JSON checkpoint; F# DUs do not. Full spike findings:
+  - MAF does **not** ignore our options (my first read was wrong). `JsonMarshaller` (built by
+    `CreateJson(store, customOptions)`) consults `customOptions` via `_externalOptions.TryGetTypeInfo` as a
+    fallback in `LookupTypeInfo`.
+  - Configuring `customOptions` with `DefaultJsonTypeInfoResolver()` + `JsonFSharpConverter()` **fixed the
+    suspension checkpoint** — `start` on a DU-typed workflow now serializes and suspends fine.
+  - But it still fails on **resume**: MAF records each value's **concrete runtime type** in `PortableValue`,
+    which for a DU value is the union **case** subtype (`ApprovalOutcome+Approved`). `JsonFSharpConverter`
+    recognizes the union type, not a bare case type, so STJ falls back to reflection and throws. Using the
+    generic `ExternalRequest.CreateResponse<union>` does **not** help — `PortableValue` uses `value.GetType()`.
+  - So the fix needs a **converter that bridges union case-type → union** (claim case types in `CanConvert`
+    and delegate to the union converter) — ~tens of lines, fiddly, plus the `FSharp.SystemTextJson` dep.
+    **Decision: deferred.** Per project goal, durable-without-DUs is the win; records cover the common case.
+  - **Clean future path (preferred):** when MAF adopts an STJ with native F# DU support, MAF's own internal
+    marshaller would likely handle the case-type value with no converter and no dependency. Revisit then, or
+    build the bridge converter earlier if a user needs DU event payloads.
+  - State: experiment reverted; no dependency added; skipped test documents the gap.
 - [ ] Escalate the durable lambda-ID warning to an error on the checkpointed build path.
 - [ ] Remove the temporary error-surfacing diagnostic in `driveStreaming` once the DU marshaller lands (or
       keep it — it's genuinely useful for surfacing checkpoint-serialization failures).
@@ -264,4 +273,6 @@ Non-streaming `RunAsync` returns a `Run` whose events can be inspected for `Work
 | 2026-06-13 | 3 | DI plumbing. `WorkflowContext.Services` + helpers (`Executor.fs`); in-process runner refactored to a single context-factory core + `runWithServices`/`runWith`; `toExecutor` now propagates services+ct to nested workflows. New `WorkflowDiTests.fs` (4 tests). 126/126 green. Files: `src/AgentNet/Executor.fs`, `src/AgentNet.InProcess/Workflow.InProcess.fs`, `src/AgentNet.Tests/*`. Next up: Phase 4 (emit RequestPort for awaitEvent; migrate DSL to core). |
 | 2026-06-13 | 4 | **Re-sequenced** after API study: `awaitEvent`→`RequestPort` is inseparable from the suspend/resume runner (a port suspends; plain `run` can't complete it), so it + lambda-ID escalation moved to Phase 5. Landed the independent pieces: migrated `awaitEvent`/`delayFor`/`eventOf` DSL into core (`WorkflowBuilder.fs`/`WorkflowCE`); implemented in-process `delayFor` (`Workflow.InProcess.fs`); emptied `AgentNet.Durable/WorkflowBuilderExtensions.fs`. New `DelayWorkflowTests.fs` (2), updated 2 obsolete `DurableWorkflowTests`. 128/128 green; suite back to ~5s (old 30s-hang delay test removed). Next up: Phase 5 (request ports + run/resume). |
 | 2026-06-13 | 5a | Request ports + in-process responder. `awaitEvent`→MAF `RequestPort` in `toMAFCore`; `runWithResponses` drives suspending workflows in-process (awaitEvent bonus works end-to-end). Found+fixed latent unit-routing bug (F# unit→null, MAF drops null) via `WorkflowUnit` surrogate at the obj boundary + `ExternalResponse` unwrap. New `AwaitEventInProcessTests.fs` (3). 131/131 green; full solution builds. Files: `src/AgentNet/Workflow.fs`, `src/AgentNet.InProcess/Workflow.InProcess.fs`, tests. Next: Phase 5b (durable start/resume over CheckpointManager + JsonFSharpConverter + lambda escalation). |
+| 2026-06-14 | 5b-cleanup | Removed the dead `FSharp.SystemTextJson` dep; `fileSystemJsonCheckpoints` uses plain options (records round-trip natively). 134 pass / 1 skip. |
+| 2026-06-14 | spike | DU-checkpoint spike concluded: simple options fix is **insufficient**. Resolver+converter fixes the suspension checkpoint, but resume fails — MAF records the DU value's concrete *case* subtype in PortableValue and JsonFSharpConverter doesn't claim bare case types (generic CreateResponse<union> doesn't change it). Needs a case→union bridge converter (deferred) or MAF adopting native-DU STJ. Experiment reverted; no dep. §5 updated. |
 | 2026-06-13 | 5b | Durable run/resume over `CheckpointManager`: `Workflow.Durable.{start,resume}` + `DurableRunResult` + checkpoint-manager factories (`inMemoryCheckpoints`, `fileSystemJsonCheckpoints` w/ FSharp.SystemTextJson). Mechanism proven (in-memory + record-through-disk-JSON). Dropped `awaitEvent` IsAbstract guard; made `WorkflowUnit` ctor public. 134 pass / 1 skip. **Discovered: F# DU serialization through MAF's checkpoint marshaller does NOT honor CreateJson's JsonSerializerOptions — the headline premise needs a custom IWireMarshaller (tracked, skipped test).** Files: `src/AgentNet.InProcess/*`, `src/AgentNet/WorkflowBuilder.fs`, `Workflow.fs`, tests. Next: solve DU marshalling, then lambda escalation. |

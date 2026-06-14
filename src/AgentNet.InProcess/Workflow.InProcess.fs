@@ -340,19 +340,14 @@ module Workflow =
         /// process (no cross-process durability) — useful for tests and single-process suspend/resume.
         let inMemoryCheckpoints () : CheckpointManager = CheckpointManager.CreateInMemory()
 
-        /// JsonSerializerOptions with F# record & DU support (via JsonFSharpConverter) registered.
-        /// This is what lets F# discriminated unions round-trip through JSON checkpoints — the thing
-        /// Azure Durable Functions' closed serializer could not do.
-        let fsharpJsonOptions () =
-            let opts = System.Text.Json.JsonSerializerOptions()
-            opts.Converters.Add(System.Text.Json.Serialization.JsonFSharpConverter())
-            opts
-
-        /// Creates a checkpoint manager that persists checkpoints as JSON files under `directory`,
-        /// with F# records & DUs supported. Checkpoints survive process restarts (cross-process durable).
+        /// Creates a checkpoint manager that persists checkpoints as JSON files under `directory`.
+        /// Checkpoints survive process restarts (cross-process durable). F# records round-trip via
+        /// System.Text.Json natively. NOTE: F# discriminated unions do NOT yet round-trip — MAF records
+        /// each value's concrete runtime type (for a DU, the union *case* subtype), and STJ has no converter
+        /// for a bare case type. See DURABLE_REWORK_PLAN.md for the precise root cause and options.
         let fileSystemJsonCheckpoints (directory: string) : CheckpointManager =
             let store = new Microsoft.Agents.AI.Workflows.Checkpointing.FileSystemJsonCheckpointStore(System.IO.DirectoryInfo(directory))
-            CheckpointManager.CreateJson(store, fsharpJsonOptions ())
+            CheckpointManager.CreateJson(store, System.Text.Json.JsonSerializerOptions())
 
         /// portId -> eventName for the workflow's awaitEvent steps (ids recomputed to match suspensions).
         let private eventNameMap (workflow: WorkflowDef<'i, 'o, 'e>) =
