@@ -7,7 +7,7 @@
     <!--  See Directory.Build.targets for external dependency versions.        -->
     <!-- ===================================================================== -->
     <PropertyGroup>
-        <AgentNetVersion>1.0.0-rc.8</AgentNetVersion>
+        <AgentNetVersion>0.1.0</AgentNetVersion>
     </PropertyGroup>
 
 </Project>
