@@ -118,11 +118,14 @@ module DurableId =
         ]
         "Node_" + sha1 identity
 
-    /// Logs a warning if the function is a lambda (compiler-generated)
+    /// Logs a warning if the function is a lambda (compiler-generated).
+    /// Lambda-derived durable IDs are stable within a single build, but can shift across source
+    /// changes/redeploys — which may break resume for a long-suspended durable workflow. Named
+    /// functions produce IDs that survive unrelated edits.
     let warnIfLambda<'a, 'b> (fn: 'a -> 'b) (id: string) : unit =
         let mi = getMethodInfo fn
         if isLambda mi then
-            eprintfn $"Warning: Step '{id}' uses a lambda. Consider extracting to a named function for more readable durable IDs."
+            eprintfn $"Warning: Step '{id}' uses a lambda. Prefer a named function — lambda-derived durable IDs are stable within a build but can shift across redeploys, which may break resume for long-suspended durable workflows."
 
     /// Tries to extract the original function name by inspecting the closure's IL.
     /// F# closures wrap the original function, and the Invoke method calls it directly.

@@ -125,8 +125,9 @@ Non-streaming `RunAsync` returns a `Run` whose events can be inspected for `Work
 
 ### Still open
 
-- **Packaging:** does `AgentNet.Durable` survive as a separate package, or fold the thin helpers into
-  core + ship Azure-backed `ICheckpointStore` implementations separately? Decide after Phase 5.
+- ~~**Packaging:** does `AgentNet.Durable` survive as a separate package?~~ **RESOLVED 2026-06-14** —
+  collapse to `AgentNet` + `AgentNet.Interop`; delete the InProcess/Durable packages, preserve namespaces.
+  See Phase 6.
 - `PendingRequest` shape — how much MAF type (`ExternalRequest`/`RequestPortInfo`) to surface vs. wrap
   in F#-typed terms (event name + expected response type + request id).
 - Which checkpoint stores ship in-box beyond in-memory + `FileSystemJsonCheckpointStore` (Azure follow-up).
@@ -233,16 +234,43 @@ Non-streaming `RunAsync` returns a `Run` whose events can be inspected for `Work
     marshaller would likely handle the case-type value with no converter and no dependency. Revisit then, or
     build the bridge converter earlier if a user needs DU event payloads.
   - State: experiment reverted; no dependency added; skipped test documents the gap.
-- [ ] Escalate the durable lambda-ID warning to an error on the checkpointed build path.
+- [x] **Lambda-ID: kept as a warning, not escalated to an error (2026-06-14).** On inspection, lambda
+      durable IDs (`DurableId.forStep` hashes the closure type name) are deterministic *within a build*, so
+      they're stable across processes running the same binary — the normal resume case. They only shift
+      across source changes/redeploys, so a hard error would wrongly break valid same-version durable use.
+      Improved the `warnIfLambda` message to name the real risk (cross-redeploy resume). A hard error would
+      also need an `IsLambda` flag threaded through `PackedTypedStep`/the CE — deferred as optional polish.
 - [ ] Remove the temporary error-surfacing diagnostic in `driveStreaming` once the DU marshaller lands (or
       keep it — it's genuinely useful for surfacing checkpoint-serialization failures).
 
-### Phase 6 — Demolition & sample
-- [ ] Delete `src/AgentNet.Durable.Interop/DurableExecutors.cs`, `DurableExecutorFactory`, `IExecutor`,
-      and the bespoke `Workflow.Durable.run`/`tryRun` loop.
-- [ ] Remove the `Microsoft.DurableTask.Abstractions` dependency from `Directory.Build.targets`.
-- [ ] Rework `Samples.DurableFunctions` (trade approval) onto the new API — likely no longer an Azure
-      Functions host; a plain host (console / ASP.NET) demonstrating start → suspend → resume.
+**Phase 5 is functionally complete** (DU-via-JSON is a documented, deferred follow-up; lambda is resolved).
+
+### Phase 6 — Consolidation & demolition
+
+**Packaging decision (resolved 2026-06-14):** collapse to **`AgentNet` (F#) + `AgentNet.Interop` (C#)**.
+MAF-native durability adds no dependency beyond what core already references (core already references the
+C# interop + `Microsoft.Agents.AI.Workflows`), so the InProcess/Durable package split no longer earns its
+keep. **Preserve the `AgentNet.InProcess` namespace + `Workflow.InProcess`/`Workflow.Durable` modules** so
+the only break for users is the *package reference* (drop `AgentNet.InProcess`), not their `open` lines.
+`AgentNet.InProcess.Polly` keeps its name (signals in-process-only; the `Workflow.InProcess` module still
+exists) and re-points its ProjectReference to `AgentNet`.
+
+Dependency-safe order (build green between steps):
+- [ ] **Rename** `AgentNet.InProcess.Interop` → `AgentNet.Interop` (dir + csproj + assembly/package id);
+      update ProjectReferences in `AgentNet`, `AgentNet.InProcess`, tests. (Namespace is already `AgentNet.Interop`.)
+- [ ] **Rework/park `Samples.DurableFunctions`** — it uses the DTFx `Workflow.Durable.run`; convert to a
+      plain host demonstrating `start → suspend → resume`, or temporarily drop from the solution to unblock.
+- [ ] **Update `AgentNet.Tests`** — drop `AgentNet.Durable`/`AgentNet.Durable.Interop` references; migrate
+      or remove DTFx-only tests (`DurableWorkflowTests` uses `DurableWorkflow.containsDurableOperations` etc.).
+- [ ] **Delete the DTFx projects** — `AgentNet.Durable` (fsproj) and `AgentNet.Durable.Interop`
+      (`DurableExecutors.cs`, `DurableExecutorFactory`, `IExecutor`); remove `Microsoft.DurableTask.*` from
+      `Directory.Build.targets` + the projects.
+- [ ] **Fold `AgentNet.InProcess` into `AgentNet`** — move `Workflow.InProcess.fs` (+ the InProcess
+      `WorkflowBuilderExtensions.fs`) into the `AgentNet` project (keep `namespace AgentNet.InProcess`),
+      fix compile order; delete the `AgentNet.InProcess` project; re-point `AgentNet.InProcess.Polly`, tests,
+      and `StockAdvisorFS` ProjectReferences to `AgentNet`.
+- [ ] **Bundle the C# interop dll** into the `AgentNet` nuget (the existing `BuildOutputInPackage` trick).
+- [ ] Version-management sweep (`Directory.Build.props`/`targets`) for the changed package set.
 
 ### Phase 7 — Tests & docs
 - [ ] Update `DurableWorkflowTests.fs` and any DTFx-coupled tests to the checkpoint/resume model.
