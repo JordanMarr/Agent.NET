@@ -23,6 +23,8 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "InProcess", "InProcess", "{
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AgentNet.Interop", "AgentNet.Interop\AgentNet.Interop.csproj", "{842077F7-2703-4A3D-894B-ECF55BAEF81D}"
 EndProject
+Project("{F2A71F9B-5D33-465A-A702-920D77279786}") = "Samples.DurableOcr", "Samples.DurableOcr\Samples.DurableOcr.fsproj", "{B67716E1-55EB-41F2-BDF9-BB9D1A87011E}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -105,6 +107,18 @@ Global
 		{842077F7-2703-4A3D-894B-ECF55BAEF81D}.Release|x64.Build.0 = Release|Any CPU
 		{842077F7-2703-4A3D-894B-ECF55BAEF81D}.Release|x86.ActiveCfg = Release|Any CPU
 		{842077F7-2703-4A3D-894B-ECF55BAEF81D}.Release|x86.Build.0 = Release|Any CPU
+		{B67716E1-55EB-41F2-BDF9-BB9D1A87011E}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{B67716E1-55EB-41F2-BDF9-BB9D1A87011E}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{B67716E1-55EB-41F2-BDF9-BB9D1A87011E}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{B67716E1-55EB-41F2-BDF9-BB9D1A87011E}.Debug|x64.Build.0 = Debug|Any CPU
+		{B67716E1-55EB-41F2-BDF9-BB9D1A87011E}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{B67716E1-55EB-41F2-BDF9-BB9D1A87011E}.Debug|x86.Build.0 = Debug|Any CPU
+		{B67716E1-55EB-41F2-BDF9-BB9D1A87011E}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{B67716E1-55EB-41F2-BDF9-BB9D1A87011E}.Release|Any CPU.Build.0 = Release|Any CPU
+		{B67716E1-55EB-41F2-BDF9-BB9D1A87011E}.Release|x64.ActiveCfg = Release|Any CPU
+		{B67716E1-55EB-41F2-BDF9-BB9D1A87011E}.Release|x64.Build.0 = Release|Any CPU
+		{B67716E1-55EB-41F2-BDF9-BB9D1A87011E}.Release|x86.ActiveCfg = Release|Any CPU
+		{B67716E1-55EB-41F2-BDF9-BB9D1A87011E}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

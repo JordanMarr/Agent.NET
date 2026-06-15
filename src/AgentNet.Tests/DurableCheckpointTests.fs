@@ -29,7 +29,7 @@ let private approvalWorkflow =
 let ``durable start suspends at awaitEvent, resume completes``() =
     let cm = Workflow.Durable.inMemoryCheckpoints ()
 
-    let startResult = (Workflow.Durable.start cm "trade-1" approvalWorkflow).GetAwaiter().GetResult()
+    let startResult = (Workflow.Durable.start cm "sess-1" "trade-1" approvalWorkflow).GetAwaiter().GetResult()
 
     match startResult with
     | Workflow.Durable.Completed _ -> failwith "expected the workflow to suspend at awaitEvent"
@@ -51,7 +51,7 @@ let ``durable round-trips a record through a JSON file checkpoint``() =
     Directory.CreateDirectory(dir) |> ignore
     try
         let cm = Workflow.Durable.fileSystemJsonCheckpoints dir
-        let startResult = (Workflow.Durable.start cm "trade-1" approvalWorkflow).GetAwaiter().GetResult()
+        let startResult = (Workflow.Durable.start cm "sess-rec-1" "trade-1" approvalWorkflow).GetAwaiter().GetResult()
 
         match startResult with
         | Workflow.Durable.Suspended (_, checkpoint) ->
@@ -87,7 +87,7 @@ let ``durable round-trips an F# DU through a JSON file checkpoint``() =
                 Task.fromResult (match o with Approved a -> $"approved by {a}" | Rejected r -> $"rejected: {r}"))
         }
         let cm = Workflow.Durable.fileSystemJsonCheckpoints dir
-        match (Workflow.Durable.start cm "req" wf).GetAwaiter().GetResult() with
+        match (Workflow.Durable.start cm "sess-du-1" "req" wf).GetAwaiter().GetResult() with
         | Workflow.Durable.Suspended (_, checkpoint) ->
             let respond (pr: PendingRequest) : obj option =
                 if pr.EventName = "Decision" then Some (box (Approved "carol")) else None
@@ -106,7 +106,7 @@ let ``durable start completes immediately for a workflow with no awaitEvent``() 
         step (fun (x: int) -> Task.fromResult (x * 3))
     }
 
-    let result = (Workflow.Durable.start cm 10 wf).GetAwaiter().GetResult()
+    let result = (Workflow.Durable.start cm "sess-noawait-1" 10 wf).GetAwaiter().GetResult()
 
     match result with
     | Workflow.Durable.Completed output -> output =! 33

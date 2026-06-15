@@ -16,6 +16,11 @@ type WorkflowContext = {
     /// them in closures, so the workflow definition stays free of captured deps (required for
     /// cross-process durable resume). See ARCHITECTURAL_INVARIANTS.md §5.
     Services: IServiceProvider
+    /// The durable session id this run is checkpointed under (empty for non-durable in-process runs).
+    /// Use it to correlate an external callback back to this run — e.g. a fire-and-await step passes
+    /// it to an async service so the service's later callback can resume the right session.
+    /// (Distinct from RunId, which is a fresh per-execution Guid.)
+    CorrelationId: string
 }
 
 module WorkflowContext =
@@ -30,11 +35,16 @@ module WorkflowContext =
         State = Map.empty
         CancellationToken = System.Threading.CancellationToken.None
         Services = emptyServices
+        CorrelationId = ""
     }
 
     /// Creates a workflow context with a specific cancellation token
     let withCancellation (ct: System.Threading.CancellationToken) (ctx: WorkflowContext) =
         { ctx with CancellationToken = ct }
+
+    /// Sets the durable session/correlation id (see WorkflowContext.CorrelationId).
+    let withCorrelationId (correlationId: string) (ctx: WorkflowContext) =
+        { ctx with CorrelationId = correlationId }
 
     /// Sets the service provider used to resolve step dependencies.
     let withServices (services: IServiceProvider) (ctx: WorkflowContext) =

@@ -277,11 +277,31 @@ Dependency-safe order (build green between steps):
 - [ ] **Bundle the C# interop dll** into the `AgentNet` nuget (the existing `BuildOutputInPackage` trick).
 - [ ] Version-management sweep (`Directory.Build.props`/`targets`) for the changed package set.
 
-### Phase 7 — Tests & docs
-- [ ] Update `DurableWorkflowTests.fs` and any DTFx-coupled tests to the checkpoint/resume model.
-- [ ] Add a test proving an `awaitEvent` workflow runs **in-process** (the bonus) and **durably**.
-- [ ] Update `README.md` feature matrix and durable docs.
-- [ ] Version bump (`Directory.Build.props`): `AgentNetVersion` + the InProcess/Durable pair together.
+### Phase 7 — Tests, sample & docs
+- [x] `DurableWorkflowTests.fs` migrated off DTFx; `awaitEvent` works in-process (`AwaitEventInProcessTests`)
+      and durably (`DurableCheckpointTests`).
+- [x] **Correlation id**: added `WorkflowContext.CorrelationId` (the durable session id; empty in-process),
+      and `Workflow.Durable.start` now takes an explicit `sessionId` (host-owned, for idempotency +
+      callback correlation). Threaded into start/resume.
+- [x] **New sample `Samples.DurableOcr`** (console): models download PDF → fire OCR (returns unit, uses
+      `ctx.CorrelationId`) → `awaitEvent "OcrComplete"` → store. Uses `fileSystemJsonCheckpoints`; shows
+      start → suspend (checkpoint to disk) → callback → resume → complete. Replaces the deleted DTFx sample.
+- [ ] Update `README.md` feature matrix and durable docs (package names, `Workflow.Durable.start/resume`,
+      the honest `step → awaitEvent` shape, idempotency note).
+- [ ] Version bump (`Directory.Build.props` `AgentNetVersion`) — release decision, left at rc.8 for now.
+
+**⚠️ Important finding — at-least-once resume (2026-06-14):** durable resume re-executes the step
+*immediately after* an `awaitEvent` **more than once** (MAF emits two `ExecutorInvoked`/`WorkflowOutputEvent`
+for it on resume; our `respond` is called once). This is the standard durable at-least-once activity
+semantic (same as Durable Functions) — so **any side-effecting step after an `awaitEvent` must be
+idempotent.** The OCR sample demonstrates the mitigation (dedup on `CorrelationId`). Our durable tests
+assert only the final output, so they don't surface it. Follow-ups: (a) document this prominently; (b)
+investigate whether our `resume` path can reduce it toward exactly-once, or whether it's inherent to
+`ResumeStreamingAsync`. 
+
+**Minor follow-up — noisy lambda warning:** `DurableId.isLambda` false-positives on *named* module-level
+functions passed by value to `step` (F# wraps them in `FSharpFunc`, whose type looks compiler-generated),
+so the warning cries wolf (fired for the sample's clean `downloadPdf`). Worth tightening the heuristic.
 
 ---
 
@@ -307,6 +327,7 @@ Dependency-safe order (build green between steps):
 | 2026-06-13 | 4 | **Re-sequenced** after API study: `awaitEvent`→`RequestPort` is inseparable from the suspend/resume runner (a port suspends; plain `run` can't complete it), so it + lambda-ID escalation moved to Phase 5. Landed the independent pieces: migrated `awaitEvent`/`delayFor`/`eventOf` DSL into core (`WorkflowBuilder.fs`/`WorkflowCE`); implemented in-process `delayFor` (`Workflow.InProcess.fs`); emptied `AgentNet.Durable/WorkflowBuilderExtensions.fs`. New `DelayWorkflowTests.fs` (2), updated 2 obsolete `DurableWorkflowTests`. 128/128 green; suite back to ~5s (old 30s-hang delay test removed). Next up: Phase 5 (request ports + run/resume). |
 | 2026-06-13 | 5a | Request ports + in-process responder. `awaitEvent`→MAF `RequestPort` in `toMAFCore`; `runWithResponses` drives suspending workflows in-process (awaitEvent bonus works end-to-end). Found+fixed latent unit-routing bug (F# unit→null, MAF drops null) via `WorkflowUnit` surrogate at the obj boundary + `ExternalResponse` unwrap. New `AwaitEventInProcessTests.fs` (3). 131/131 green; full solution builds. Files: `src/AgentNet/Workflow.fs`, `src/AgentNet.InProcess/Workflow.InProcess.fs`, tests. Next: Phase 5b (durable start/resume over CheckpointManager + JsonFSharpConverter + lambda escalation). |
 | 2026-06-14 | 5b-cleanup | Removed the dead `FSharp.SystemTextJson` dep; `fileSystemJsonCheckpoints` uses plain options (records round-trip natively). 134 pass / 1 skip. |
+| 2026-06-15 | 7 | Correlation id (`WorkflowContext.CorrelationId` + host-owned `sessionId` on `Workflow.Durable.start`) for callback routing/idempotency. New `Samples.DurableOcr` console sample (PDF→fire-OCR→awaitEvent→store) on a file-system checkpoint store, demonstrating suspend→resume + idempotent post-await step. **Found: durable resume is at-least-once for the step after `awaitEvent`** (MAF re-executes it) → idempotency required; sample shows the dedup. 128/1 green. Remaining: README/docs. |
 | 2026-06-14 | 6 | **Consolidation done.** Removed DTFx (deleted `AgentNet.Durable` + `.Interop` + `Samples.DurableFunctions`, dropped `Microsoft.DurableTask.*`, migrated/trimmed tests). Renamed `AgentNet.InProcess.Interop` → `AgentNet.Interop`. Folded `AgentNet.InProcess` → `AgentNet` (kept `AgentNet.InProcess` namespace, so only package refs break). Re-pointed Polly/StockAdvisorFS/Tests; bundled interop into `AgentNet`; collapsed versions to `AgentNetVersion`; updated CLAUDE.md packages note. Build green, 128/1. Remaining: Phase 7 (README/docs + a new MAF-checkpoint sample to replace the deleted DTFx one). |
 | 2026-06-14 | spike | DU-checkpoint spike concluded: simple options fix is **insufficient**. Resolver+converter fixes the suspension checkpoint, but resume fails — MAF records the DU value's concrete *case* subtype in PortableValue and JsonFSharpConverter doesn't claim bare case types (generic CreateResponse<union> doesn't change it). Needs a case→union bridge converter (deferred) or MAF adopting native-DU STJ. Experiment reverted; no dep. §5 updated. |
 | 2026-06-13 | 5b | Durable run/resume over `CheckpointManager`: `Workflow.Durable.{start,resume}` + `DurableRunResult` + checkpoint-manager factories (`inMemoryCheckpoints`, `fileSystemJsonCheckpoints` w/ FSharp.SystemTextJson). Mechanism proven (in-memory + record-through-disk-JSON). Dropped `awaitEvent` IsAbstract guard; made `WorkflowUnit` ctor public. 134 pass / 1 skip. **Discovered: F# DU serialization through MAF's checkpoint marshaller does NOT honor CreateJson's JsonSerializerOptions — the headline premise needs a custom IWireMarshaller (tracked, skipped test).** Files: `src/AgentNet.InProcess/*`, `src/AgentNet/WorkflowBuilder.fs`, `Workflow.fs`, tests. Next: solve DU marshalling, then lambda escalation. |

@@ -405,22 +405,23 @@ module Workflow =
                     return failwith "Durable run produced neither output nor a pending request."
             }
 
-        /// Starts a durable run. Runs (checkpointing along the way) until the workflow completes or
-        /// suspends at its first awaitEvent. The returned checkpoint (on Suspended) is committed to the
-        /// CheckpointManager and can be used to resume later.
-        let start<'input, 'output, 'error> (checkpointManager: CheckpointManager) (input: 'input) (workflow: WorkflowDef<'input, 'output, 'error>) : Task<DurableRunResult<'output>> =
+        /// Starts a durable run under the given `sessionId` (the host owns this — derive it from a
+        /// business/event key for idempotency, and steps see it as ctx.CorrelationId to wire callbacks).
+        /// Runs (checkpointing along the way) until the workflow completes or suspends at its first
+        /// awaitEvent. The returned checkpoint (on Suspended) is committed and can be used to resume later.
+        let start<'input, 'output, 'error> (checkpointManager: CheckpointManager) (sessionId: string) (input: 'input) (workflow: WorkflowDef<'input, 'output, 'error>) : Task<DurableRunResult<'output>> =
             task {
-                let maf = toMAFCore (fun () -> WorkflowContext.create()) workflow
-                let! run = MAFInProcessExecution.RunStreamingAsync(maf, input :> obj, checkpointManager, null, System.Threading.CancellationToken.None)
+                let maf = toMAFCore (fun () -> WorkflowContext.create() |> WorkflowContext.withCorrelationId sessionId) workflow
+                let! run = MAFInProcessExecution.RunStreamingAsync(maf, input :> obj, checkpointManager, sessionId, System.Threading.CancellationToken.None)
                 return! driveStreaming<'output> run (eventNameMap workflow) (fun _ -> None)
             }
 
         /// Resumes a durable run from a checkpoint, answering awaited events via `respond` (return Some
         /// payload to answer, None to leave that event suspended). Runs until completion or the next
-        /// unanswered suspension.
+        /// unanswered suspension. Steps see the checkpoint's session id as ctx.CorrelationId.
         let resume<'input, 'output, 'error> (checkpointManager: CheckpointManager) (workflow: WorkflowDef<'input, 'output, 'error>) (checkpoint: CheckpointInfo) (respond: PendingRequest -> obj option) : Task<DurableRunResult<'output>> =
             task {
-                let maf = toMAFCore (fun () -> WorkflowContext.create()) workflow
+                let maf = toMAFCore (fun () -> WorkflowContext.create() |> WorkflowContext.withCorrelationId checkpoint.SessionId) workflow
                 let! run = MAFInProcessExecution.ResumeStreamingAsync(maf, checkpoint, checkpointManager, System.Threading.CancellationToken.None)
                 return! driveStreaming<'output> run (eventNameMap workflow) respond
             }
