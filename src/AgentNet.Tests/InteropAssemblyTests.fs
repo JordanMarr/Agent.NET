@@ -44,5 +44,5 @@ let private loadAndVerifyAssembly (assemblyName: string) =
         Assert.Fail($"Failed to resolve types/members in {assemblyName}:{Environment.NewLine}{msg}")
 
 [<Test>]
-let ``AgentNet.InProcess.Interop assembly loads and all types resolve`` () =
-    loadAndVerifyAssembly "AgentNet.InProcess.Interop"
+let ``AgentNet.Interop assembly loads and all types resolve`` () =
+    loadAndVerifyAssembly "AgentNet.Interop"

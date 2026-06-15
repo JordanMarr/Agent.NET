@@ -2,14 +2,12 @@
 
     <!-- ===================================================================== -->
     <!--  AgentNet package versions                                            -->
-    <!--  All AgentNet packages (Core, InProcess, Durable, Polly) share        -->
-    <!--  the same version and are bumped together as a single release wave.   -->
+    <!--  AgentNet and the AgentNet.InProcess.Polly add-on share this version   -->
+    <!--  and are bumped together as a single release wave.                     -->
     <!--  See Directory.Build.targets for external dependency versions.        -->
     <!-- ===================================================================== -->
     <PropertyGroup>
         <AgentNetVersion>1.0.0-rc.8</AgentNetVersion>
-        <AgentNetInProcessVersion>$(AgentNetVersion)</AgentNetInProcessVersion>
-        <AgentNetDurableVersion>$(AgentNetVersion)</AgentNetDurableVersion>
     </PropertyGroup>
 
 </Project>

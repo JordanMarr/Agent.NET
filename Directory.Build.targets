@@ -24,13 +24,4 @@
     <PackageReference Update="Microsoft.Extensions.AI.Abstractions" Version="10.6.0" />
   </ItemGroup>
 
-  <!-- ========================================================= -->
-  <!--  Durable Task Framework                                   -->
-  <!--  Used by AgentNet.Durable and Azure Functions workflows.  -->
-  <!--  These must be aligned to avoid runtime type mismatches.  -->
-  <!-- ========================================================= -->
-  <ItemGroup>
-    <PackageReference Update="Microsoft.DurableTask.Abstractions" Version="1.24.0" />
-  </ItemGroup>
-
 </Project>

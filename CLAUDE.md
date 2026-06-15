@@ -14,8 +14,16 @@ is the source of truth for this effort — read it before touching durable execu
 modify" guardrails on `Workflow.Durable.run` / `toMAF` / the durable runtime were stale and have been
 removed; that code is being deliberately replaced.
 
+PACKAGES
+
+- `AgentNet` (F#) — the whole library: definitions, CE, agent integration, and in-process + durable
+  (MAF checkpoint) workflow execution. Namespaces `AgentNet` and `AgentNet.InProcess` both live here.
+- `AgentNet.Interop` (C#) — MAF `Executor` subclasses; bundled into the `AgentNet` package.
+- `AgentNet.InProcess.Polly` (F#) — optional Polly resilience decorators (in-process only).
+
 VERSION MANAGEMENT
 
-- `Directory.Build.props` — AgentNet package versions (properties referenced via `$(...)` in .fsproj files)
-- `Directory.Build.targets` — Microsoft Agent Framework and dependency versions (uses `Update=` to override PackageReference versions)
-- AgentNet.InProcess and AgentNet.InProcess.Polly share `AgentNetInProcessVersion` and must always be bumped together.
+- `Directory.Build.props` — `AgentNetVersion` (referenced via `$(...)` by `AgentNet` and
+  `AgentNet.InProcess.Polly`; bumped together as one release wave).
+- `Directory.Build.targets` — Microsoft Agent Framework and dependency versions (uses `Update=` to
+  override PackageReference versions).

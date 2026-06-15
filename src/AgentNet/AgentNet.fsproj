@@ -33,17 +33,24 @@
     <Compile Include="Workflow.fs" />
     <Compile Include="WorkflowBuilder.fs" />
     <Compile Include="AgentFramework.fs" />
+    <Compile Include="WorkflowBuilderExtensions.fs" />
+    <Compile Include="Workflow.InProcess.fs" />
   </ItemGroup>
 
   <ItemGroup>
-    <InternalsVisibleTo Include="AgentNet.Durable" />
-    <InternalsVisibleTo Include="AgentNet.InProcess" />
     <InternalsVisibleTo Include="AgentNet.Tests" />
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\AgentNet.InProcess.Interop\AgentNet.InProcess.Interop.csproj" PrivateAssets="All" />
+    <ProjectReference Include="..\AgentNet.Interop\AgentNet.Interop.csproj" PrivateAssets="All" />
   </ItemGroup>
+
+  <!-- Bundle the C# interop dll into the package (it's a PrivateAssets ProjectReference). -->
+  <Target Name="IncludeInteropInPackage" BeforeTargets="BuildOnlySettings">
+    <ItemGroup>
+      <BuildOutputInPackage Include="$(OutputPath)AgentNet.Interop.dll" />
+    </ItemGroup>
+  </Target>
 
   <ItemGroup>
     <PackageReference Include="Microsoft.Agents.AI" />
