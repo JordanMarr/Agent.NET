@@ -34,8 +34,6 @@ pipeline "publish" {
                 System.IO.Directory.CreateDirectory(outputDir) |> ignore
         )
         run $"dotnet pack src/AgentNet/AgentNet.fsproj -c Release --output {outputDir}"
-        run $"dotnet pack src/AgentNet.Durable/AgentNet.Durable.fsproj -c Release --output {outputDir}"
-        run $"dotnet pack src/AgentNet.InProcess/AgentNet.InProcess.fsproj -c Release --output {outputDir}"
         run $"dotnet pack src/AgentNet.InProcess.Polly/AgentNet.InProcess.Polly.fsproj -c Release --output {outputDir}"
     }
 
@@ -68,7 +66,7 @@ pipeline "test" {
 }
 
 pipeline "test-live" {
-    description "Test against published NuGet packages (all packages)"
+    description "Test against the published NuGet packages (catches missing transitive deps)"
 
     stage "build" {
         run "dotnet build src/AgentNet.Tests/AgentNet.Tests.fsproj -p:TestLivePackages=true"
@@ -76,20 +74,6 @@ pipeline "test-live" {
 
     stage "test" {
         run "dotnet test src/AgentNet.Tests/AgentNet.Tests.fsproj -p:TestLivePackages=true --no-build"
-    }
-
-    runIfOnlySpecified
-}
-
-pipeline "test-live-inprocess" {
-    description "Test against published InProcess packages only (catches missing transitive deps)"
-
-    stage "build" {
-        run "dotnet build src/AgentNet.Tests/AgentNet.Tests.fsproj -p:TestLivePackages=InProcess"
-    }
-
-    stage "test" {
-        run "dotnet test src/AgentNet.Tests/AgentNet.Tests.fsproj -p:TestLivePackages=InProcess --no-build --filter FullyQualifiedName!~DurableWorkflowTests"
     }
 
     runIfOnlySpecified
