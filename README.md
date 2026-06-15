@@ -5,7 +5,7 @@
 Typed. Declarative. Durable.
 
 [![AgentNet](https://img.shields.io/nuget/v/AgentNet.svg?label=AgentNet)](https://www.nuget.org/packages/AgentNet)
-[![AgentNet.Durable](https://img.shields.io/nuget/v/AgentNet.Durable.svg?label=AgentNet.Durable)](https://www.nuget.org/packages/AgentNet.Durable)
+[![AgentNet.InProcess.Polly](https://img.shields.io/nuget/v/AgentNet.InProcess.Polly.svg?label=AgentNet.InProcess.Polly)](https://www.nuget.org/packages/AgentNet.InProcess.Polly)
 [![License](https://img.shields.io/github/license/JordanMarr/Agent.NET?v=1)](LICENSE)
 
 ---
@@ -45,7 +45,7 @@ let! sentiment = analyzeAgent.Invoke message
 _[Learn more ->](#typedagent-structured-inputoutput-for-workflows)_
 
 ### 3. Create workflows (`workflow`)
-Strongly typed orchestration mixing deterministic .NET code with LLM calls. Run in-process or on Azure Durable Functions.
+Strongly typed orchestration mixing deterministic .NET code with LLM calls. Run in-process, or durably with MAF checkpoint/resume — from the same definition.
 
 ```fsharp
 let myWorkflow = workflow {
@@ -58,87 +58,66 @@ _[Learn more ->](#workflows-computation-expression-for-orchestration)_
 
 ---
 
-## 🚀 Durable Workflows in Azure (Minimal Example)
+## 🚀 Durable Workflows (Minimal Example)
 
-Agent.NET workflows run anywhere — in‑memory for local execution, or durably on Azure using Durable Functions.
+The **same** workflow definition runs two ways: **in-process** (held in the current process), or **durably** — checkpointed at each step, suspended at `awaitEvent`, and resumed later from the checkpoint (in a different process if needed). Durability is powered by the Microsoft Agent Framework's native checkpoint/resume model — **no Azure Durable Functions dependency**.
 
-From the `Samples.DurableFunctions` project:
+A workflow with a suspension point — here an async OCR service we fire and then await a callback from:
 
 ```fsharp
-/// A durable trade approval workflow defined with Agent.NET
-let tradeApprovalWorkflow =
+let ocrWorkflow =
     workflow {
-        name "TradeApprovalWorkflow"
-        step analyzeStock
-        step sendForApproval
-        awaitEvent "TradeApproval" eventOf<ApprovalDecision>
-        step executeTrade
+        name "PdfOcr"
+        step downloadPdf                              // PdfRef    -> byte[]
+        step requestOcr                               // byte[]    -> unit       (fire; yields the process)
+        awaitEvent "OcrComplete" eventOf<OcrResult>   // unit      -> OcrResult   (SUSPEND until callback)
+        step storeResult                              // OcrResult -> string
     }
 ```
 
-You can host this workflow inside an Azure Durable Functions orchestrator written in F# **or C#**.
-
-<details>
-<summary>F# orchestrator</summary>
+Run it durably with a checkpoint store. `start` runs until the workflow completes or suspends; `resume` continues from the checkpoint when the awaited event arrives:
 
 ```fsharp
-module TradeApprovalWorkflow
+open AgentNet.InProcess
 
-open Microsoft.DurableTask
-open Microsoft.Azure.Functions.Worker
-open AgentNet.Durable
+// A checkpoint store: in-memory, file system, or your own ICheckpointStore (e.g. SQL/Blob).
+let checkpoints = Workflow.Durable.fileSystemJsonCheckpoints "/var/agentnet/checkpoints"
 
-[<Function("TradeApprovalOrchestrator")>]
-let orchestrator ([<OrchestrationTrigger>] ctx: TaskOrchestrationContext) =
-    let request = ctx.GetInput<TradeRequest>()
-    Workflow.Durable.run ctx request tradeApprovalWorkflow
+// sessionId is host-owned — derive it from the inbound event id for idempotency + callback correlation.
+match! Workflow.Durable.start checkpoints sessionId pdfRef ocrWorkflow with
+| Workflow.Durable.Completed result ->
+    // finished without suspending
+| Workflow.Durable.Suspended (awaiting, checkpoint) ->
+    // checkpoint is persisted; this process can exit. Later, when the OCR callback arrives:
+    let! result =
+        Workflow.Durable.resume checkpoints ocrWorkflow checkpoint (fun req ->
+            if req.EventName = "OcrComplete" then Some (box ocrResult) else None)
 ```
 
-</details>
+This is the shape:
+- **Declarative workflow definition** — one expression per workflow
+- **Typed steps** — plain .NET functions (with or without agents)
+- **Explicit suspension** via `awaitEvent` (human-in-the-loop, async service callbacks) — no hidden replay, no determinism rules on your step code
+- **Durable execution** via MAF checkpointing — suspend, persist, resume across process restarts
+- **`ctx.CorrelationId`** — the run's durable session id, so a fire step can wire an external callback back to the right run
 
-<details open>
-<summary>C# orchestrator</summary>
-
-Call a workflow defined in your F# project:
-
-```csharp
-using Microsoft.DurableTask;
-using Microsoft.Azure.Functions.Worker;
-using AgentNet.Durable;
-
-public static class TradeApprovalOrchestrator
-{
-    [Function("TradeApprovalOrchestrator")]
-    public static Task<TradeResult> Run([OrchestrationTrigger] TaskOrchestrationContext context)
-    {
-        var request = context.GetInput<TradeRequest>();
-        return Workflow.Durable.run(context, request, tradeApprovalWorkflow);
-    }
-}
-```
-
-</details>
-
-This is the final shape:  
-- **Declarative workflow definition** — one expression per workflow  
-- **Typed steps** — plain .NET functions (with or without agents)  
-- **Explicit suspension** via `awaitEvent` (human-in-the-loop, external events)  
-- **Durable execution** powered by MAF and Azure Durable Functions  
-- **Minimal host surface** — the orchestrator simply runs the workflow  
+> **Idempotency note:** durable resume re-delivers the step *after* an `awaitEvent` **at-least-once** (as with any durable system), so make post-`awaitEvent` side effects idempotent. The [`Samples.DurableOcr`](./src/Samples.DurableOcr) project shows the full cycle and the dedup pattern.
 
 ---
 
 ## Installation
 
-**AgentNet** — Agents and in-process workflows
+**AgentNet** — agents, the workflow DSL, and both in-process and durable (checkpoint/resume) execution
 ```bash
 dotnet add package AgentNet
 ```
 
-**AgentNet.Durable** — Azure Durable Function workflows
+**AgentNet.InProcess.Polly** _(optional)_ — advanced Polly resilience decorators for the in-process runner
 ```bash
-dotnet add package AgentNet.Durable
+dotnet add package AgentNet.InProcess.Polly
 ```
+
+> Migrating from `0.x`-era previews: the `AgentNet.InProcess` and `AgentNet.Durable` packages have been merged into **`AgentNet`**. Drop those references and use `AgentNet` — your `open AgentNet.InProcess` code keeps compiling.
 
 ---
 
@@ -352,7 +331,7 @@ let claimsWorkflow = workflow {
     step generateReport
 }
     
-let report = Workflow.runSync claimData claimsWorkflow
+let! report = Workflow.InProcess.run claimData claimsWorkflow
 ```
 
 > **Note:** `fanOut` supports 2-5 direct arguments. For 6+ branches, use list syntax with the `+` operator, which converts each item to a unified `Step` type (enabling mixed executors, functions, angents, and workflows in the same list):
@@ -483,7 +462,7 @@ var combinedPolicy = Policy.WrapAsync(fallbackPolicy, timeoutPolicy, retryPolicy
 
 ### Polly Integration (InProcess Runtime Only)
 
-AgentNet includes **built‑in, cross‑runtime resilience features** such as retries, timeouts, and backoff strategies that work consistently across both the Durable and InProcess runtimes. These features are deterministic, replay‑safe, and integrated directly into the workflow execution model.
+AgentNet includes **built‑in resilience operations** — `retry`, `timeout`, `fallback` — that compile into the workflow graph, so they work consistently whether the workflow runs in-process or durably. Because they're part of the definition, they're checkpointed along with the rest of the workflow.
 
 For **advanced, runtime‑only resilience scenarios** — such as circuit breakers, hedging, rate limiting, or composite resilience strategies — you can optionally integrate **Polly** through the `AgentNet.InProcess.Polly` extension package.
 
@@ -568,7 +547,7 @@ let outerWorkflow = workflow {
 // Or use toExecutor when you want explicit naming
 let namedOuter = workflow {
     step preprocess
-    step (Workflow.toExecutor "InnerStep" innerWorkflow)
+    step (Workflow.InProcess.toExecutor "InnerStep" innerWorkflow)
     step postprocess
 }
 ```
@@ -600,11 +579,11 @@ var outerWorkflow = outerBuilder.Build();
 #### Running Workflows
 
 ```fsharp
-// Synchronous
-let result = Workflow.runSync "initial input" myWorkflow
-
-// Asynchronous
+// In-process (returns a Task<'output>)
 let! result = Workflow.InProcess.run "initial input" myWorkflow
+
+// Need a blocking call? Await the Task explicitly:
+let result = (Workflow.InProcess.run "initial input" myWorkflow).GetAwaiter().GetResult()
 ```
 
 ## Railway-Oriented Programming with `tryStep`
@@ -654,19 +633,19 @@ let documentWorkflow = workflow {
 ### Running the workflow
 
 ```fsharp
-let! result = Workflow.InProcess.tryRun documentWorkflow
+let! result = Workflow.InProcess.tryRun rawInput documentWorkflow
 ```
 
 - If any `tryStep` returns `Error`, the workflow stops immediately  
 - `tryRun` returns `Result<'ok, 'err>`  
-- `run` (without `Result`) throws an internal early‑exit signal instead — useful for Durable orchestrators  
+- `run` (without `Result`) surfaces the early‑exit as a thrown signal instead — use `tryRun` when you want the typed `Result`  
 
 ### Why `tryStep` feels so natural
 
 - **No monadic boilerplate** — you stay in the main `workflow` CE  
 - **No type contagion** — only the steps that need `Result` use it  
 - **Clear, predictable control flow** — early exit is explicit and typed  
-- **Works everywhere** — InProcess and Durable runners share the same semantics  
+- **One DSL** — `tryStep` is part of the same `workflow` CE; no separate monadic style to switch into  
 
 ### Step types supported by `tryStep`
 
@@ -690,7 +669,7 @@ let! result = Workflow.InProcess.tryRun documentWorkflow
 | `ChatResponse` | Full response with `Text` and `Messages` list |
 | `ChatMessage` | Message with `Role` and `Content` |
 | `ChatRole` | Union type: User, Assistant, System, Tool |
-| `WorkflowContext` | Context passed to executors with `RunId`, `State`, and `CancellationToken` |
+| `WorkflowContext` | Context passed to executors with `RunId`, `State`, `CancellationToken`, `Services` (DI), and `CorrelationId` (durable session id) |
 | `Executor<'i,'o>` | Workflow step that transforms input to output |
 | `WorkflowDef<'i,'o>` | Composable workflow definition |
 
@@ -737,12 +716,14 @@ let! result = Workflow.InProcess.tryRun documentWorkflow
 
 | Function | Description |
 |---------|-------------|
-| `Workflow.InProcess.run` | Runs a workflow in‑process and returns the final output. Throws on `tryStep` errors. |
+| `Workflow.InProcess.run` | Runs a workflow in‑process (held in the current process) and returns the final output. Throws on `tryStep` errors. |
 | `Workflow.InProcess.runWithCancellation` | Like `run`, but accepts an external `CancellationToken` that flows into every step and Polly policy. |
+| `Workflow.InProcess.runWithServices` / `runWith` | Like `run`, seeding each step's `ctx.Services` with an `IServiceProvider` (and, for `runWith`, a `CancellationToken`). |
+| `Workflow.InProcess.runWithResponses` | Drives a suspending (`awaitEvent`) workflow to completion in-process by supplying responses via a callback — the in-process counterpart to durable resume. |
 | `Workflow.InProcess.tryRun` | Runs a workflow in‑process and returns `Result<'output,'error>` with early‑exit handling. |
-| `Workflow.Durable.run` | Runs a workflow inside a Durable Functions orchestrator. Throws on `tryStep` errors. |
-| `Workflow.Durable.tryRun` | Durable‑safe version of `tryRun`; returns `Result<'output,'error>` instead of throwing. |
-| `Workflow.Durable.tryRunIgnore` | Use when your Durable orchestrator delegates to a workflow but doesn’t need to return a value. This avoids Durable’s restriction on serializing F# discriminated unions. |
+| `Workflow.Durable.start` | Starts a durable run under a host-owned `sessionId`; checkpoints each step and runs until completion or the first `awaitEvent` suspension. Returns `Completed` or `Suspended (pending, checkpoint)`. |
+| `Workflow.Durable.resume` | Resumes a durable run from a `CheckpointInfo`, answering awaited events via a `respond` callback. Runs to completion or the next suspension. |
+| `Workflow.Durable.inMemoryCheckpoints` / `fileSystemJsonCheckpoints` | Create a `CheckpointManager` backed by in-memory or on-disk JSON storage. Provide your own `ICheckpointStore` for SQL/Blob/etc. |
 
 
 ---
@@ -783,11 +764,11 @@ let stockAnalysisWF = workflow {
     step generateRecommendation
 }
 
-// In-memory execution (quick-running workflows)
+// In-process execution (quick-running workflows)
 let! result = Workflow.InProcess.run input stockAnalysisWF
 
-// MAF durable execution (long-running, durable workflows)
-let! result = Workflow.Durable.run ctx input stockAnalysisWF
+// Durable execution (long-running; checkpointed suspend/resume)
+let! outcome = Workflow.Durable.start checkpoints sessionId input stockAnalysisWF
 ```
 
 ### Why a Semantic Layer?
@@ -805,8 +786,8 @@ Agent.NET supports both execution models from a single workflow definition:
 
 | Mode | API | Description |
 |------|-----|-------------|
-| **In-memory** | `Workflow.InProcess.run` | Used for short-lived workflows executed within the current process. |
-| **MAF Durable** | `Workflow.Durable.run` | Runs on MAF's durable runtime (backed by Azure Durable Functions) with automatic checkpointing, replay, and fault tolerance. |
+| **In-process** | `Workflow.InProcess.run` | Short-lived workflows executed (and held) within the current process. |
+| **Durable** | `Workflow.Durable.start` / `resume` | MAF-native checkpointing: each step is checkpointed, the run suspends at `awaitEvent`, and resumes from the checkpoint later — across process restarts, persisted to your `ICheckpointStore`. No Azure dependency. |
 
 *Same workflow. Your choice of execution model.*
 
@@ -815,21 +796,19 @@ Agent.NET supports both execution models from a single workflow definition:
 
 ## Dependencies
 
-Both packages depend only on **abstractions**, keeping Agent.NET lightweight, platform‑agnostic, and free of Azure‑specific hosting requirements.
+Agent.NET is lightweight, platform‑agnostic, and free of Azure‑specific hosting requirements — both in-process and durable execution run on the Microsoft Agent Framework alone.
 
 ### **AgentNet**  
-Built on the core Microsoft Agent Framework abstractions.
+The whole library — agents, the workflow DSL, and in-process + durable (checkpoint/resume) execution.
 
 - **Microsoft.Agents.AI** — agent primitives  
-- **Microsoft.Agents.AI.Workflows** — workflow graph + in‑memory execution  
+- **Microsoft.Agents.AI.Workflows** — workflow graph, in‑process execution, and checkpointing  
 - **Microsoft.Extensions.AI.Abstractions** — AI service abstractions for .NET
-- **Polly.Core** — resilience and transient-fault-handling (used by the `policy` decorator)  
 
-### **AgentNet.Durable**  
-Adds durable execution by targeting the Durable Task abstractions.
+### **AgentNet.InProcess.Polly** _(optional)_  
+Advanced Polly resilience decorators for the in-process runner.
 
-- **Microsoft.DurableTask.Abstractions** — durable orchestration primitives  
-- **Microsoft.Agents.AI.Workflows** — shared workflow graph model  
+- **Polly.Core** — circuit breakers, hedging, rate limiting, composite strategies  
 
 ---
 
@@ -849,12 +828,13 @@ Contributions are welcome! Please feel free to submit issues and pull requests.
 
 ### Workflow State Management
 
-The current `WorkflowContext.State` mechanism needs rework — each step currently receives a fresh context, so state changes don't propagate between steps. A future release will provide proper state management that integrates with MAF's serialization for durable workflows.
+`WorkflowContext` now carries `Services` (DI) and `CorrelationId` (the durable session id), both seeded per run. The remaining gap is the `State` dictionary: each step receives a fresh context, so `State` changes don't propagate between steps. Cross-step state should currently flow through step inputs/outputs (which *is* what gets checkpointed durably); a future release will offer a friendlier typed-state API on top.
 
 | Feature | Status | Description |
 |---------|--------|-------------|
-| **State propagation fix** | Planned | Rework `WorkflowContext` so state set in one step is available to subsequent steps |
-| **Strongly-typed state** | Planned | `Workflow.InProcess.runWithState` and `Workflow.Durable.runWithState` for passing typed state between steps with a friendlier API. Also allows initializing workflows with predefined state. |
+| **`State` propagation** | Planned | Make `WorkflowContext.State` set in one step available to later steps (and checkpointed durably). |
+| **Strongly-typed state** | Planned | A `runWithState` API for passing typed state between steps and seeding a workflow with initial state. |
+| **F# DU checkpoint serialization** | Investigating | F# discriminated unions don't yet round-trip through MAF's JSON checkpoint serializer (records do). |
 
 ---
 
