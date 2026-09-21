@@ -113,6 +113,61 @@ let ``Tool_createWithDocs falls back to empty param descriptions when not docume
     // greetWithDocs has no <param> tags, so description should be empty
     tool.Parameters[0].Description =! ""
 
+// --- XML doc lookup with non-trivial parameter types (issue #8) -----------
+
+// Declared inside a module, so its reflection name is nested (ToolTests+RoundDeps).
+type RoundDeps = { ShowId: System.Guid }
+
+type Outer<'a> = { Value: 'a }
+
+/// <summary>Starts a new round of trivia in this party.</summary>
+/// <param name="deps">Injected: never shown to the model.</param>
+/// <param name="topic">What the round should be about.</param>
+let startRound (deps: RoundDeps) (topic: string) : string =
+    $"{deps.ShowId}:{topic}"
+
+/// <summary>Searches with optional filters</summary>
+/// <param name="query">The search text</param>
+/// <param name="tags">Tags to filter by</param>
+/// <param name="limit">Maximum number of results</param>
+let searchWithGenerics (query: string option) (tags: string list) (limit: Map<string, int[]>) : string =
+    $"{query}{tags}{limit}"
+
+/// <summary>Takes a nested generic of a nested type</summary>
+/// <param name="wrapped">The wrapped deps</param>
+let nestedGeneric (wrapped: Outer<RoundDeps option>[]) : string =
+    $"{wrapped}"
+
+[<Test>]
+let ``Tool_createWithDocs finds docs when a parameter type is nested in a module`` () =
+    let tool = Tool.createWithDocs <@ startRound @>
+    tool.Description =! "Starts a new round of trivia in this party."
+    tool.Parameters[0].Description =! "Injected: never shown to the model."
+    tool.Parameters[1].Description =! "What the round should be about."
+
+[<Test>]
+let ``Tool_createWithDocs finds docs when parameter types are generic`` () =
+    let tool = Tool.createWithDocs <@ searchWithGenerics @>
+    tool.Description =! "Searches with optional filters"
+    tool.Parameters[0].Description =! "The search text"
+    tool.Parameters[1].Description =! "Tags to filter by"
+    tool.Parameters[2].Description =! "Maximum number of results"
+
+[<Test>]
+let ``Tool_createWithDocs finds docs for nested generic array parameter types`` () =
+    let tool = Tool.createWithDocs <@ nestedGeneric @>
+    tool.Description =! "Takes a nested generic of a nested type"
+    tool.Parameters[0].Description =! "The wrapped deps"
+
+[<Test>]
+let ``Tool_createWithDocs then inject keeps docs when the dep is a nested record`` () =
+    let tool =
+        Tool.createWithDocs <@ startRound @>
+        |> Tool.inject { ShowId = System.Guid.Empty }
+    tool.Description =! "Starts a new round of trivia in this party."
+    tool.Parameters.Length =! 1
+    tool.Parameters[0].Description =! "What the round should be about."
+
 // --- Tool.inject tests ---------------------------------------------------
 
 type IClock =

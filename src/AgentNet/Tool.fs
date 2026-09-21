@@ -44,12 +44,47 @@ type Tool private () =
             with _ -> None
         )
 
+    /// Formats a type the way it appears in an XML documentation member ID:
+    /// nested types use '.' (not '+'), and generic arguments are written as {A,B} without the `N arity.
+    static let rec xmlDocTypeName (t: Type) : string =
+        if t.IsByRef then
+            xmlDocTypeName (t.GetElementType()) + "@"
+        elif t.IsPointer then
+            xmlDocTypeName (t.GetElementType()) + "*"
+        elif t.IsArray then
+            let suffix =
+                match t.GetArrayRank() with
+                | 1 -> "[]"
+                | rank -> "[" + String.concat "," (Array.create rank "0:") + "]"
+            xmlDocTypeName (t.GetElementType()) + suffix
+        elif t.IsGenericParameter then
+            (if isNull t.DeclaringMethod then "`" else "``") + string t.GenericParameterPosition
+        else
+            // Walk outermost -> innermost; each generic type in the chain consumes its own
+            // share of the flattened generic argument list.
+            let rec chain (x: Type) = if x.IsNested then chain x.DeclaringType @ [ x ] else [ x ]
+            let genericArgs = t.GetGenericArguments()
+            let segments, _ =
+                (([], 0), chain t)
+                ||> List.fold (fun (acc, consumed) x ->
+                    match x.Name.LastIndexOf '`' with
+                    | -1 -> x.Name :: acc, consumed
+                    | i ->
+                        let arity = int (x.Name.Substring(i + 1))
+                        let args =
+                            genericArgs[consumed .. consumed + arity - 1]
+                            |> Array.map xmlDocTypeName
+                            |> String.concat ","
+                        $"{x.Name.Substring(0, i)}{{{args}}}" :: acc, consumed + arity)
+            let name = segments |> List.rev |> String.concat "."
+            if String.IsNullOrEmpty t.Namespace then name else $"{t.Namespace}.{name}"
+
     /// Gets the XML documentation member name for a method
     static let getXmlMemberName (mi: MethodInfo) =
-        let typeName = mi.DeclaringType.FullName.Replace("+", ".")
+        let typeName = xmlDocTypeName mi.DeclaringType
         let paramTypes =
             mi.GetParameters()
-            |> Array.map (fun p -> p.ParameterType.FullName)
+            |> Array.map (fun p -> xmlDocTypeName p.ParameterType)
             |> String.concat ","
         if String.IsNullOrEmpty(paramTypes) then
             $"M:{typeName}.{mi.Name}"
