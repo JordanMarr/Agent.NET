@@ -2,6 +2,8 @@ module AgentNet.Tests.ToolTests
 
 open NUnit.Framework
 open Swensen.Unquote
+open System.Text.Json
+open Microsoft.Extensions.AI
 open AgentNet
 
 // Test functions without XML docs
@@ -225,33 +227,55 @@ let ``Tool_inject preserves param descriptions from XML docs (dep param dropped)
     tool.Parameters[1].Description =! "The current price"
     tool.Parameters[2].Description =! "The currency code"
 
+// Tool.inject records the dep on the ToolDef; the schema/invocation behaviour is realised when the
+// tool is converted to an AIFunction, so these go through the real factory.
+
+let private schemaOf (tool: ToolDef) =
+    (MAF.toolToAIFunction tool).JsonSchema
+
+let private schemaPropertyNames (tool: ToolDef) =
+    match (schemaOf tool).TryGetProperty "properties" with
+    | true, props -> [ for p in props.EnumerateObject() -> p.Name ]
+    | _ -> []
+
+let private invoke (tool: ToolDef) (args: (string * obj) list) =
+    let fn = MAF.toolToAIFunction tool
+    let result = fn.InvokeAsync(AIFunctionArguments(dict args)).AsTask().Result
+    match result with
+    | :? JsonElement as j -> j.GetString()
+    | other -> string other
+
 [<Test>]
-let ``Tool_inject MethodInfo signature matches remaining Parameters`` () =
+let ``Tool_inject leaves the underlying MethodInfo untouched and records a binding`` () =
+    let original = Tool.create <@ formatWithService @>
+    let tool = original |> Tool.inject "fmt-svc"
+    tool.MethodInfo =! original.MethodInfo
+    tool.Bindings.Positions =! [ 0 ]
+    original.Bindings.IsEmpty =! true
+
+[<Test>]
+let ``Tool_inject never exposes injected values when a ToolDef is printed`` () =
+    let tool =
+        Tool.create <@ formatWithService @>
+        |> Tool.inject "s3cr3t-api-key"
+    let printed = [ sprintf "%A" tool; tool.ToString(); sprintf "%A" tool.Bindings; string tool.Bindings ]
+    printed |> List.iter (fun text -> text.Contains "s3cr3t" =! false)
+    sprintf "%A" tool.Bindings =! "<injected: 0>"
+
+[<Test>]
+let ``Tool_inject hides the injected parameter from the model schema`` () =
     let tool =
         Tool.create <@ formatWithService @>
         |> Tool.inject "fmt-svc"
-    let methodParamTypes =
-        tool.MethodInfo.GetParameters() |> Array.map (fun p -> p.ParameterType) |> Array.toList
-    let toolParamTypes = tool.Parameters |> List.map (fun p -> p.Type)
-    methodParamTypes =! toolParamTypes
+    schemaPropertyNames tool =! (tool.Parameters |> List.map (fun p -> p.Name))
+    schemaPropertyNames tool =! [ "symbol"; "price"; "currency" ]
 
 [<Test>]
-let ``Tool_inject MethodInfo parameter names match remaining Parameters`` () =
-    let tool =
-        Tool.create <@ formatWithService @>
-        |> Tool.inject "fmt-svc"
-    let methodParamNames =
-        tool.MethodInfo.GetParameters() |> Array.map (fun p -> p.Name) |> Array.toList
-    let toolParamNames = tool.Parameters |> List.map (fun p -> p.Name)
-    methodParamNames =! toolParamNames
-
-[<Test>]
-let ``Tool_inject MethodInfo invokes underlying function with captured dep`` () =
+let ``Tool_inject invokes underlying function with captured dep`` () =
     let tool =
         Tool.create <@ lookupUser @>
         |> Tool.inject "prod-db"
-    let result = tool.MethodInfo.Invoke(null, [| box 42 |])
-    result =! box "prod-db:user42"
+    invoke tool [ "userId", box 42 ] =! "prod-db:user42"
 
 [<Test>]
 let ``Tool_inject preserves Name and Description on the resulting tool`` () =
@@ -268,9 +292,8 @@ let ``Tool_inject works when the dep is the only parameter`` () =
         Tool.create <@ depOnly @>
         |> Tool.inject "world"
     tool.Parameters =! []
-    tool.MethodInfo.GetParameters().Length =! 0
-    let result = tool.MethodInfo.Invoke(null, [||])
-    result =! box "hello world"
+    schemaPropertyNames tool =! []
+    invoke tool [] =! "hello world"
 
 [<Test>]
 let ``Tool_inject works when the only remaining parameter is unit`` () =
@@ -281,25 +304,80 @@ let ``Tool_inject works when the only remaining parameter is unit`` () =
     // The trailing `()` compiles to a Microsoft.FSharp.Core.Unit param.
     tool.Parameters.Length =! 1
     tool.Parameters[0].Type =! typeof<unit>
-    let methodParams = tool.MethodInfo.GetParameters()
-    methodParams.Length =! 1
-    methodParams[0].ParameterType =! typeof<unit>
     // Unit's runtime representation is null.
-    let result = tool.MethodInfo.Invoke(null, [| null |])
-    result =! box "2026-04-25"
+    invoke tool [ tool.Parameters[0].Name, null ] =! "2026-04-25"
 
 [<Test>]
-let ``Tool_inject MethodInfo has a non-null DeclaringType`` () =
-    // Reflection consumers (including some MAF code paths) check DeclaringType — make sure
-    // the emitted forwarder lives on a real type, not a free-floating dynamic method.
+let ``Tool_inject can be applied repeatedly, binding left to right`` () =
     let tool =
-        Tool.create <@ lookupUser @>
-        |> Tool.inject "prod-db"
-    tool.MethodInfo.DeclaringType <>! null
+        Tool.create <@ formatWithService @>
+        |> Tool.inject "fmt-svc"
+        |> Tool.inject "MSFT"
+    tool.Parameters |> List.map (fun p -> p.Name) =! [ "price"; "currency" ]
+    schemaPropertyNames tool =! [ "price"; "currency" ]
+    invoke tool [ "price", box 1.5m; "currency", box "USD" ] =! "fmt-svc|MSFT: 1.5 USD"
+
+[<Test>]
+let ``Tool_inject works with a record dep declared in a module`` () =
+    let showId = System.Guid.NewGuid()
+    let tool =
+        Tool.createWithDocs <@ startRound @>
+        |> Tool.inject { ShowId = showId }
+    schemaPropertyNames tool =! [ "topic" ]
+    invoke tool [ "topic", box "70s rock" ] =! $"{showId}:70s rock"
+
+[<Test>]
+let ``Tool_inject rejects a dep of the wrong type up front`` () =
+    raises<exn> <@ Tool.create <@ lookupUser @> |> Tool.inject 42 @>
+
+[<Test>]
+let ``Tool_inject fails when every parameter is already injected`` () =
+    raises<exn> <@ Tool.create <@ depOnly @> |> Tool.inject "a" |> Tool.inject "b" @>
+
+[<Test>]
+let ``Tool_inject does not retain deps after the ToolDef is dropped (issue #9)`` () =
+    // Previously each call leaked a dynamic type plus a static dep-store entry holding the dep.
+    let injectAndDrop () =
+        let dep = { ShowId = System.Guid.NewGuid() }
+        let tool = Tool.create <@ startRound @> |> Tool.inject dep
+        MAF.toolToAIFunction tool |> ignore
+        System.WeakReference dep
+    let weak = injectAndDrop ()
+    System.GC.Collect()
+    System.GC.WaitForPendingFinalizers()
+    System.GC.Collect()
+    weak.IsAlive =! false
 
 [<Test>]
 let ``Tool_inject is composable across different deps without cross-contamination`` () =
     let toolA = Tool.create <@ lookupUser @> |> Tool.inject "db-A"
     let toolB = Tool.create <@ lookupUser @> |> Tool.inject "db-B"
-    toolA.MethodInfo.Invoke(null, [| box 1 |]) =! box "db-A:user1"
-    toolB.MethodInfo.Invoke(null, [| box 2 |]) =! box "db-B:user2"
+    invoke toolA [ "userId", box 1 ] =! "db-A:user1"
+    invoke toolB [ "userId", box 2 ] =! "db-B:user2"
+
+// --- Param descriptions reach the model (issue #10) -----------------------
+
+let private schemaParamDescription (tool: ToolDef) (name: string) =
+    let prop = (schemaOf tool).GetProperty("properties").GetProperty(name)
+    match prop.TryGetProperty "description" with
+    | true, d -> Some (d.GetString())
+    | _ -> None
+
+[<Test>]
+let ``XML param descriptions are passed through to the AIFunction schema`` () =
+    let tool = Tool.createWithDocs <@ formatWithParamDocs @>
+    schemaParamDescription tool "symbol" =! Some "The stock ticker symbol"
+    schemaParamDescription tool "price" =! Some "The current price"
+    schemaParamDescription tool "currency" =! Some "The currency code (e.g., USD)"
+
+[<Test>]
+let ``Params without a description get no schema description`` () =
+    let tool = Tool.create <@ formatPrice @>
+    schemaParamDescription tool "symbol" =! None
+
+[<Test>]
+let ``XML param descriptions survive Tool_inject`` () =
+    let tool =
+        Tool.createWithDocs <@ startRound @>
+        |> Tool.inject { ShowId = System.Guid.Empty }
+    schemaParamDescription tool "topic" =! Some "What the round should be about."

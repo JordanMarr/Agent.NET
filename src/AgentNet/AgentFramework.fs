@@ -1,6 +1,9 @@
 namespace AgentNet
 
+open System
+open System.Collections.Concurrent
 open System.Collections.Generic
+open System.Reflection
 open System.Text
 open System.Text.Json
 open System.Threading
@@ -8,22 +11,81 @@ open System.Threading.Tasks
 open Microsoft.Agents.AI
 open Microsoft.Extensions.AI
 
+/// Wraps an AIFunction whose leading parameters were bound by Tool.inject. The bound values live
+/// here (and so are collected with the function) and are handed to the inner function per invocation
+/// via AIFunctionArguments.Context. They must NOT be captured by the AIFunctionFactoryOptions
+/// delegates: AIFunctionFactory keeps a static descriptor cache keyed on those delegates, which
+/// would pin every injected value for the life of the process.
+type internal InjectedAIFunction(inner: AIFunction, bindings: Map<int, obj>) =
+    inherit DelegatingAIFunction(inner)
+
+    static member val BindingsKey = obj ()
+
+    override _.InvokeCoreAsync(arguments: AIFunctionArguments, cancellationToken: CancellationToken) =
+        if isNull arguments.Context then
+            arguments.Context <- Dictionary<obj, obj>()
+        arguments.Context[InjectedAIFunction.BindingsKey] <- box bindings
+        base.InvokeCoreAsync(arguments, cancellationToken)
+
 /// Integration with Microsoft Agent Framework
 [<RequireQualifiedAccess>]
 module MAF =
 
+    // The delegates below are part of AIFunctionFactory's descriptor cache key, so they are
+    // cached here to be reference-stable: the same tool converts to the same cached descriptor
+    // however many times it is injected/converted.
+
+    /// Binding config per set of bound parameter positions. Captures positions only, never values.
+    let private parameterBindingCache =
+        ConcurrentDictionary<string, Func<ParameterInfo, AIFunctionFactoryOptions.ParameterBindingOptions>>()
+
+    let private getParameterBinding (bindings: ToolBindings) =
+        let positions = Set.ofList bindings.Positions
+        let key = positions |> Seq.map string |> String.concat ","
+        parameterBindingCache.GetOrAdd(key, fun _ ->
+            let bindParameter =
+                Func<ParameterInfo, AIFunctionArguments, obj>(fun p args ->
+                    (args.Context[InjectedAIFunction.BindingsKey] :?> Map<int, obj>)[p.Position])
+            Func<ParameterInfo, AIFunctionFactoryOptions.ParameterBindingOptions>(fun p ->
+                if positions.Contains p.Position then
+                    AIFunctionFactoryOptions.ParameterBindingOptions(
+                        ExcludeFromSchema = true,
+                        BindParameter = bindParameter)
+                else
+                    AIFunctionFactoryOptions.ParameterBindingOptions()))
+
+    /// Schema options per (method, param descriptions).
+    let private schemaOptionsCache =
+        ConcurrentDictionary<struct (MethodInfo * Map<string, string>), AIJsonSchemaCreateOptions>()
+
+    let private getSchemaOptions (mi: MethodInfo) (descriptions: Map<string, string>) =
+        schemaOptionsCache.GetOrAdd(struct (mi, descriptions), fun _ ->
+            AIJsonSchemaCreateOptions(
+                ParameterDescriptionProvider =
+                    // null leaves a parameter's schema untouched
+                    Func<ParameterInfo, string>(fun p -> descriptions |> Map.tryFind p.Name |> Option.toObj)))
+
     /// Converts an AgentNet ToolDef to a Microsoft.Extensions.AI AIFunction
-    let private toolToAIFunction (tool: ToolDef) : AIFunction =
-        // NOTE: tool.Parameters contains param descriptions extracted from XML docs,
-        // but AIFunctionFactoryOptions doesn't currently support passing them through.
-        // Tracking issue: https://github.com/microsoft/agent-framework/issues/1864
+    let internal toolToAIFunction (tool: ToolDef) : AIFunction =
         let options = AIFunctionFactoryOptions(
             Name = tool.Name,
             Description = tool.Description
         )
+        // Parameters bound by Tool.inject are hidden from the schema and supplied at invoke time.
+        if not tool.Bindings.IsEmpty then
+            options.ConfigureParameterBinding <- getParameterBinding tool.Bindings
+        // Pass param descriptions (e.g. from XML docs) through to the model.
+        let descriptions =
+            tool.Parameters
+            |> List.filter (fun p -> not (String.IsNullOrWhiteSpace p.Description))
+            |> List.map (fun p -> p.Name, p.Description)
+            |> Map.ofList
+        if not descriptions.IsEmpty then
+            options.JsonSchemaCreateOptions <- getSchemaOptions tool.MethodInfo descriptions
         // Use the (MethodInfo, object, options) overload for static methods
         // The explicit annotation ensures correct overload resolution
-        AIFunctionFactory.Create(method = tool.MethodInfo, target = null, options = options)
+        let fn = AIFunctionFactory.Create(method = tool.MethodInfo, target = null, options = options)
+        if tool.Bindings.IsEmpty then fn else InjectedAIFunction(fn, tool.Bindings.Values)
 
     /// Creates a ChatClientAgent from an AgentNet ChatAgent config
     let createAgent (chatClient: IChatClient) (config: ChatAgentConfig) : AIAgent =

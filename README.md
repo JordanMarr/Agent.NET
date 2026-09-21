@@ -167,7 +167,7 @@ let searchTool =
 
 Most real-world tool functions need a dependency — a database, an HTTP client, a domain service. But the agent shouldn't see (or be able to fill in) that dependency: it's a host concern, not a model concern.
 
-`Tool.inject` partially applies the **leftmost parameter** of a tool's underlying function with a value you supply, and returns a new `ToolDef` whose metadata and method signature are exactly one parameter shorter. The captured dependency is forwarded to the original function at invoke time.
+`Tool.inject` partially applies the **leftmost parameter** of a tool's underlying function with a value you supply, and returns a new `ToolDef` whose `Parameters` are exactly one shorter. The injected parameter is hidden from the schema the model sees, and the dependency is supplied to the original function at invoke time. The value lives on the `ToolDef` (in the opaque `Bindings`) and is garbage-collected with it, so `Tool.inject` is cheap and safe to call per request. Injected values are never shown when a `ToolDef` is printed or logged — only which parameter positions are bound.
 
 ```fsharp
 /// <summary>Looks up a user by id</summary>
@@ -187,7 +187,7 @@ let lookupUserTool =
 - **Hide infrastructure from the model** — the LLM only sees parameters it can meaningfully reason about
 - **Per-request dependencies** — capture a tenant-scoped service, a request-scoped logger, etc. by injecting a fresh value each time you build the agent
 - **No wrapper boilerplate** — you don't need to hand-write a closure-shaped tool function just to thread a dependency through
-- **XML metadata still works** — descriptions on the remaining parameters survive the injection
+- **XML metadata still works** — descriptions on the remaining parameters survive the injection and are passed to the model
 
 `Tool.inject` is composable in pipelines and works whether the dependency is the only parameter or one of many. You can also inject into functions whose remaining input is `unit`:
 
@@ -661,7 +661,7 @@ let! result = Workflow.InProcess.tryRun rawInput documentWorkflow
 
 | Type | Description |
 |------|-------------|
-| `ToolDef` | Tool definition with name, description, parameters, and MethodInfo |
+| `ToolDef` | Tool definition with name, description, parameters, MethodInfo, and any `Tool.inject` bindings |
 | `ParamInfo` | Parameter metadata: name, description, and type |
 | `ChatAgentConfig` | Agent configuration: name, instructions, and tools |
 | `ChatAgent` | Built agent with `Chat: string -> CancellationToken -> Task<string>` and `ChatFull` |

@@ -4,8 +4,6 @@ open System
 open System.Collections.Concurrent
 open System.IO
 open System.Reflection
-open System.Reflection.Emit
-open System.Threading
 open System.Xml.Linq
 open Microsoft.FSharp.Quotations
 open Microsoft.FSharp.Quotations.Patterns
@@ -17,12 +15,41 @@ type ParamInfo = {
     Type: Type
 }
 
+/// Values supplied by Tool.inject, keyed by MethodInfo parameter position. Deliberately opaque:
+/// injected values are often secrets (API keys, connections), so they are not publicly readable
+/// and never appear when a ToolDef is printed (%A / ToString) or serialized. Only the bound
+/// positions are visible.
+[<Sealed; StructuredFormatDisplay("{Display}")>]
+type ToolBindings internal (values: Map<int, obj>) =
+    /// No injected parameters
+    static member Empty = ToolBindings(Map.empty)
+    member internal _.Values = values
+    member internal _.Add(position: int, value: obj) = ToolBindings(values |> Map.add position value)
+    /// True when nothing has been injected
+    member _.IsEmpty = values.IsEmpty
+    /// The MethodInfo parameter positions that have been injected
+    member _.Positions = values |> Map.toList |> List.map fst
+    member this.Display = this.ToString()
+    override this.ToString() =
+        if values.IsEmpty then "none"
+        else this.Positions |> List.map string |> String.concat ", " |> sprintf "<injected: %s>"
+    override _.Equals(other) =
+        match other with
+        | :? ToolBindings as o -> values = o.Values
+        | _ -> false
+    override _.GetHashCode() = hash values
+
 /// Represents an AI tool that can be invoked by an agent
 type ToolDef = {
     Name: string
     Description: string
+    /// Parameters visible to the model (injected parameters are excluded)
     Parameters: ParamInfo list
+    /// The underlying method. Tool.inject does not rewrite it, so it still declares any injected parameters.
     MethodInfo: MethodInfo
+    /// Values supplied by Tool.inject. Bound parameters are excluded from the schema shown to the
+    /// model and filled in at invocation time.
+    Bindings: ToolBindings
 }
 
 /// Functions for building tools using a pipeline approach
@@ -141,17 +168,6 @@ type Tool private () =
             | _ -> None
         extract expr
 
-    // Dependency injection plumbing for Tool.inject.
-    // Captured deps are stored by GUID and looked up by emitted IL via GetDep.
-    static let depStore = ConcurrentDictionary<string, obj>()
-
-    static let injectedAssemblyModule : ModuleBuilder =
-        let asmName = AssemblyName("AgentNet.Tool.Injected")
-        let asmBuilder = AssemblyBuilder.DefineDynamicAssembly(asmName, AssemblyBuilderAccess.Run)
-        asmBuilder.DefineDynamicModule("InjectedToolsModule")
-
-    static let injectedTypeCounter = ref 0
-
     /// Creates a tool from a quoted function expression
     static member create (expr: Expr<'a -> 'b>) : ToolDef =
         match extractMethodInfo expr with
@@ -162,6 +178,7 @@ type Tool private () =
                 Description = ""
                 Parameters = parameters
                 MethodInfo = mi
+                Bindings = ToolBindings.Empty
             }
         | None ->
             failwithf "Could not extract method info from quotation: %A" expr
@@ -179,6 +196,7 @@ type Tool private () =
                 Description = description
                 Parameters = parameters
                 MethodInfo = mi
+                Bindings = ToolBindings.Empty
             }
         | None ->
             failwithf "Could not extract method info from quotation: %A" expr
@@ -187,80 +205,24 @@ type Tool private () =
     static member describe (description: string) (tool: ToolDef) : ToolDef =
         { tool with Description = description }
 
-    /// Called from emitted IL. Must be public so the freshly-generated forwarder method,
-    /// which lives in a separate dynamic assembly, can call it.
-    static member GetDep(key: string) : obj = depStore[key]
-
-    /// Partially applies the leftmost parameter of the tool's underlying method, producing a
-    /// new ToolDef whose exposed metadata and invocation are 1 parameter shorter. The captured
-    /// dep is stored in a private dictionary keyed by GUID; a freshly-emitted static method
-    /// retrieves it and forwards to the original method at invoke time. Returns a first-class
-    /// MethodInfo (non-null DeclaringType) so reflection consumers that check DeclaringType
-    /// behave correctly.
+    /// Partially applies the leftmost not-yet-injected parameter of the tool's underlying method,
+    /// producing a new ToolDef whose exposed Parameters are 1 shorter. The dep is recorded in
+    /// Bindings and rides on the ToolDef: it is hidden from the model's schema and supplied at
+    /// invoke time, and is collected normally along with the ToolDef (safe to call per request).
     static member inject (dep: 'dep) (tool: ToolDef) : ToolDef =
-        let mi = tool.MethodInfo
-        let allParams = mi.GetParameters()
-        if allParams.Length < 1 then
+        let target =
+            tool.MethodInfo.GetParameters()
+            |> Array.tryFind (fun p -> not (tool.Bindings.Values.ContainsKey p.Position))
+        match target with
+        | None ->
             failwithf "Tool '%s' has no parameters to inject into." tool.Name
-
-        let depParamType = allParams[0].ParameterType
-        let remainingParamTypes = allParams |> Array.skip 1 |> Array.map (fun p -> p.ParameterType)
-
-        let key = Guid.NewGuid().ToString("N")
-        depStore[key] <- box dep
-
-        let typeIdx = Interlocked.Increment(injectedTypeCounter)
-        let typeName = $"InjectedTool_{tool.Name}_{typeIdx}_{key}"
-        let typeBuilder =
-            injectedAssemblyModule.DefineType(
-                typeName,
-                TypeAttributes.Public ||| TypeAttributes.Class ||| TypeAttributes.Abstract ||| TypeAttributes.Sealed
-            )
-
-        let methodName = mi.Name
-        let methodBuilder =
-            typeBuilder.DefineMethod(
-                methodName,
-                MethodAttributes.Public ||| MethodAttributes.Static,
-                mi.ReturnType,
-                remainingParamTypes
-            )
-
-        // Preserve original parameter names + attributes on remaining params
-        for i in 0 .. remainingParamTypes.Length - 1 do
-            let p = allParams[i + 1]
-            methodBuilder.DefineParameter(i + 1, p.Attributes, p.Name) |> ignore
-
-        let il = methodBuilder.GetILGenerator()
-        let getDepMethod =
-            typeof<Tool>.GetMethod("GetDep", BindingFlags.Public ||| BindingFlags.Static)
-
-        // Load the captured dep: push key, call GetDep, cast/unbox to dep type
-        il.Emit(OpCodes.Ldstr, key)
-        il.EmitCall(OpCodes.Call, getDepMethod, null)
-        if depParamType.IsValueType then
-            il.Emit(OpCodes.Unbox_Any, depParamType)
-        else
-            il.Emit(OpCodes.Castclass, depParamType)
-
-        // Load the remaining args
-        for i in 0 .. remainingParamTypes.Length - 1 do
-            match i with
-            | 0 -> il.Emit(OpCodes.Ldarg_0)
-            | 1 -> il.Emit(OpCodes.Ldarg_1)
-            | 2 -> il.Emit(OpCodes.Ldarg_2)
-            | 3 -> il.Emit(OpCodes.Ldarg_3)
-            | n when n < 256 -> il.Emit(OpCodes.Ldarg_S, byte n)
-            | n -> il.Emit(OpCodes.Ldarg, int16 n)
-
-        il.EmitCall(OpCodes.Call, mi, null)
-        il.Emit(OpCodes.Ret)
-
-        let finalType = typeBuilder.CreateType()
-        let finalMethod = finalType.GetMethod(methodName, BindingFlags.Public ||| BindingFlags.Static)
-
-        let remainingParams = tool.Parameters |> List.skip 1
-
-        { tool with
-            MethodInfo = finalMethod
-            Parameters = remainingParams }
+        | Some p ->
+            match box dep with
+            | null -> ()
+            | v when p.ParameterType.IsInstanceOfType v -> ()
+            | v ->
+                failwithf "Tool '%s': cannot inject a value of type '%s' into parameter '%s' of type '%s'."
+                    tool.Name (v.GetType().FullName) p.Name p.ParameterType.FullName
+            { tool with
+                Bindings = tool.Bindings.Add(p.Position, box dep)
+                Parameters = tool.Parameters |> List.skip 1 }
